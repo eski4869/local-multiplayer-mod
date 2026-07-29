@@ -431,13 +431,13 @@ namespace LocalMultiplayerMod
             switch (CurrentOption)
             {
                 case 1:
-                    return "Local Multiplayer: 2 Players";
+                    return "Multiplayer: 2P";
                 case 2:
-                    return "Local Multiplayer: 2 Players (Compact)";
+                    return "Multiplayer: 2P Compact";
                 case 3:
-                    return "Local Multiplayer: 4 Players";
+                    return "Multiplayer: 4P";
                 default:
-                    return "Local Multiplayer: Single Player";
+                    return "Multiplayer: 1P";
             }
         }
 
