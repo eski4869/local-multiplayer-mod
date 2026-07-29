@@ -23,7 +23,6 @@ namespace LocalMultiplayerMod
         private static bool _levelStarted;
         private static bool _raceComplete;
         private static bool _blockBehavioursSynchronized;
-        private static int _creatingPlayerNumber;
         private static readonly FieldInfo BlockBehaviourLookupField = AccessTools.Field(
             typeof(BodyComp),
             "m_blockBehaviourLookup"
@@ -134,11 +133,6 @@ namespace LocalMultiplayerMod
                 GetPlayerNumber(input.gameObject as PlayerEntity);
         }
 
-        public static int GetSpritePlayerNumber(PlayerEntity player)
-        {
-            return _creatingPlayerNumber > 1 ? _creatingPlayerNumber : GetPlayerNumber(player);
-        }
-
         public static void FinishRace()
         {
             _raceComplete = true;
@@ -239,7 +233,6 @@ namespace LocalMultiplayerMod
 
                 try
                 {
-                    _creatingPlayerNumber = playerNumber;
                     PlayerEntity player = new PlayerEntity();
                     AdditionalPlayers[index] = player;
                     PlayerSpriteFactory.Prepare(playerNumber);
@@ -269,18 +262,11 @@ namespace LocalMultiplayerMod
                         "Local Multiplayer player " + playerNumber + " start failed: " + ex.Message
                     );
                 }
-                finally
-                {
-                    _creatingPlayerNumber = 0;
-                }
             }
         }
 
         private static void StopAdditionalPlayers()
         {
-            LocalMultiplayerApi.ClearInput(2);
-            LocalMultiplayerApi.ClearInput(3);
-            LocalMultiplayerApi.ClearInput(4);
             MultiplayerSplitRenderer.Release();
 
             for (int i = 0; i < AdditionalPlayers.Length; i++)
@@ -304,7 +290,6 @@ namespace LocalMultiplayerMod
                 playerNumber++)
             {
                 int index = playerNumber - 2;
-                LocalMultiplayerApi.ClearInput(playerNumber);
                 if (AdditionalPlayers[index] != null && AdditionalPlayers[index].IsAlive)
                 {
                     AdditionalPlayers[index].Destroy();
@@ -544,7 +529,6 @@ namespace LocalMultiplayerMod
     {
         public static bool Prefix(
             InputComponent __instance,
-            MethodBase __originalMethod,
             ref InputComponent.State __result
         )
         {
@@ -554,8 +538,7 @@ namespace LocalMultiplayerMod
                 return true;
             }
 
-            bool pressed = __originalMethod.Name == "GetPressedState";
-            __result = LocalMultiplayerApi.GetInputState(playerNumber, pressed);
+            __result = new InputComponent.State();
             return false;
         }
     }
@@ -607,14 +590,18 @@ namespace LocalMultiplayerMod
         }
     }
 
-    internal static class AdditionalPlayerSpritePatch
+    internal static class AdditionalPlayerDrawPatch
     {
-        public static void Prefix(PlayerEntity __instance, ref Sprite p_sprite)
+        public static void Prefix(PlayerEntity __instance, ref Sprite ___m_sprite)
         {
-            int playerNumber = MultiplayerRuntime.GetSpritePlayerNumber(__instance);
+            int playerNumber = MultiplayerRuntime.GetPlayerNumber(__instance);
             if (playerNumber > 1)
             {
-                p_sprite = PlayerSpriteFactory.Get(p_sprite, playerNumber);
+                PlayerSpriteFactory.ApplyForDraw(
+                    __instance,
+                    ref ___m_sprite,
+                    playerNumber
+                );
             }
         }
     }
@@ -642,6 +629,25 @@ namespace LocalMultiplayerMod
             CreateLayeredSpriteCaches();
         private static readonly Dictionary<Texture2D, Texture2D>[] Textures =
             CreateTextureCaches();
+        private static readonly Dictionary<PlayerEntity, Sprite> AppliedDrawSprites =
+            new Dictionary<PlayerEntity, Sprite>();
+
+        public static void ApplyForDraw(
+            PlayerEntity player,
+            ref Sprite sprite,
+            int playerNumber
+        )
+        {
+            Sprite applied;
+            if (AppliedDrawSprites.TryGetValue(player, out applied) &&
+                ReferenceEquals(applied, sprite))
+            {
+                return;
+            }
+
+            sprite = Get(sprite, playerNumber);
+            AppliedDrawSprites[player] = sprite;
+        }
 
         public static Sprite Get(Sprite source, int playerNumber)
         {
@@ -715,6 +721,8 @@ namespace LocalMultiplayerMod
                 LayeredSprites[i].Clear();
                 Textures[i].Clear();
             }
+
+            AppliedDrawSprites.Clear();
         }
 
         private static Sprite GetLayeredSprite(
@@ -811,18 +819,24 @@ namespace LocalMultiplayerMod
             {
                 case 2:
                     return new Color(
-                        minimum + chroma * 3 / 4,
-                        minimum,
                         maximum,
+                        minimum + (chroma * 7 + 7) / 15,
+                        minimum,
                         source.A
                     );
                 case 3:
-                    return new Color(maximum, maximum, minimum, source.A);
-                case 4:
                     return new Color(
                         minimum,
                         maximum,
-                        minimum + chroma / 4,
+                        minimum + (chroma + 1) / 3,
+                        source.A
+                    );
+                case 4:
+                    int silver = minimum + (chroma * 82 + 50) / 100;
+                    return new Color(
+                        silver,
+                        silver,
+                        silver,
                         source.A
                     );
                 default:

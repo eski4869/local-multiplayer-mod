@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Xml.Serialization;
 
 namespace LocalMultiplayerMod
 {
@@ -15,47 +16,28 @@ namespace LocalMultiplayerMod
 
     internal sealed class UserCommandRouter
     {
-        private readonly UserPatternList _singlePlayer1;
-        private readonly UserPatternList _multiplayerPlayer1;
-        private readonly UserPatternList _multiplayerPlayer2;
-        private readonly UserPatternList _fourPlayer1;
-        private readonly UserPatternList _fourPlayer2;
-        private readonly UserPatternList _fourPlayer3;
-        private readonly UserPatternList _fourPlayer4;
+        private readonly UserRoutingMode _singleMode;
+        private readonly UserRoutingMode _multiplayerMode;
+        private readonly UserRoutingMode _fourPlayerMode;
 
         public UserCommandRouter(
-            string singlePlayer1,
-            string multiplayerPlayer1,
-            string multiplayerPlayer2
-        ) : this(
-            singlePlayer1,
-            multiplayerPlayer1,
-            multiplayerPlayer2,
-            string.Empty,
-            string.Empty,
-            string.Empty,
-            string.Empty
+            string[] singleDefaultRoutes,
+            IList<UserOverridePreference> singleOverrides,
+            string[] multiplayerDefaultRoutes,
+            IList<UserOverridePreference> multiplayerOverrides,
+            string[] fourPlayerDefaultRoutes,
+            IList<UserOverridePreference> fourPlayerOverrides
         )
         {
-        }
-
-        public UserCommandRouter(
-            string singlePlayer1,
-            string multiplayerPlayer1,
-            string multiplayerPlayer2,
-            string fourPlayer1,
-            string fourPlayer2,
-            string fourPlayer3,
-            string fourPlayer4
-        )
-        {
-            _singlePlayer1 = new UserPatternList(singlePlayer1);
-            _multiplayerPlayer1 = new UserPatternList(multiplayerPlayer1);
-            _multiplayerPlayer2 = new UserPatternList(multiplayerPlayer2);
-            _fourPlayer1 = new UserPatternList(fourPlayer1);
-            _fourPlayer2 = new UserPatternList(fourPlayer2);
-            _fourPlayer3 = new UserPatternList(fourPlayer3);
-            _fourPlayer4 = new UserPatternList(fourPlayer4);
+            _singleMode = new UserRoutingMode(singleDefaultRoutes, singleOverrides);
+            _multiplayerMode = new UserRoutingMode(
+                multiplayerDefaultRoutes,
+                multiplayerOverrides
+            );
+            _fourPlayerMode = new UserRoutingMode(
+                fourPlayerDefaultRoutes,
+                fourPlayerOverrides
+            );
         }
 
         public PlayerTargets Resolve(bool multiplayerEnabled, string user)
@@ -69,12 +51,10 @@ namespace LocalMultiplayerMod
 
             if (playerCount == 1)
             {
-                if (normalizedUser == null || _singlePlayer1.IsMatch(normalizedUser))
-                {
-                    return PlayerTargets.Player1;
-                }
-
-                return PlayerTargets.None;
+                return normalizedUser == null ||
+                    _singleMode.Resolve(normalizedUser) == PlayerTargets.Player1
+                        ? PlayerTargets.Player1
+                        : PlayerTargets.None;
             }
 
             if (normalizedUser == null)
@@ -82,49 +62,151 @@ namespace LocalMultiplayerMod
                 return PlayerTargets.None;
             }
 
-            PlayerTargets targets = PlayerTargets.None;
-
-            if (playerCount == 2)
-            {
-                if (_multiplayerPlayer1.IsMatch(normalizedUser))
-                {
-                    targets |= PlayerTargets.Player1;
-                }
-
-                if (_multiplayerPlayer2.IsMatch(normalizedUser))
-                {
-                    targets |= PlayerTargets.Player2;
-                }
-
-                return targets;
-            }
-
-            if (_fourPlayer1.IsMatch(normalizedUser))
-            {
-                targets |= PlayerTargets.Player1;
-            }
-
-            if (_fourPlayer2.IsMatch(normalizedUser))
-            {
-                targets |= PlayerTargets.Player2;
-            }
-
-            if (_fourPlayer3.IsMatch(normalizedUser))
-            {
-                targets |= PlayerTargets.Player3;
-            }
-
-            if (_fourPlayer4.IsMatch(normalizedUser))
-            {
-                targets |= PlayerTargets.Player4;
-            }
-
-            return targets;
+            return playerCount == 2
+                ? _multiplayerMode.Resolve(normalizedUser)
+                : _fourPlayerMode.Resolve(normalizedUser);
         }
 
         private static string NormalizeUser(string user)
         {
             return string.IsNullOrWhiteSpace(user) ? null : user.Trim();
+        }
+    }
+
+    internal sealed class UserRoutingMode
+    {
+        private readonly UserPatternList[] _defaultRoutes;
+        private readonly Dictionary<string, int> _overrides;
+
+        public UserRoutingMode(
+            string[] defaultRoutes,
+            IList<UserOverridePreference> overrides
+        )
+        {
+            if (defaultRoutes == null || defaultRoutes.Length == 0)
+            {
+                throw new FormatException("at least one default route is required");
+            }
+
+            _defaultRoutes = new UserPatternList[defaultRoutes.Length];
+            for (int i = 0; i < defaultRoutes.Length; i++)
+            {
+                _defaultRoutes[i] = new UserPatternList(defaultRoutes[i]);
+            }
+
+            _overrides = new Dictionary<string, int>(
+                StringComparer.OrdinalIgnoreCase
+            );
+            if (overrides == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < overrides.Count; i++)
+            {
+                UserOverridePreference item = overrides[i];
+                string user = UserOverrideEditor.NormalizeUser(
+                    item == null ? null : item.Name
+                );
+                int playerNumber = item == null ? 0 : item.Player;
+                if (user == null || playerNumber < 1 ||
+                    playerNumber > _defaultRoutes.Length)
+                {
+                    throw new FormatException("invalid user override");
+                }
+
+                if (_overrides.ContainsKey(user))
+                {
+                    throw new FormatException(
+                        "duplicate user override: " + user
+                    );
+                }
+
+                _overrides.Add(user, playerNumber);
+            }
+        }
+
+        public PlayerTargets Resolve(string user)
+        {
+            int playerNumber;
+            if (_overrides.TryGetValue(user, out playerNumber))
+            {
+                return (PlayerTargets)(1 << (playerNumber - 1));
+            }
+
+            for (int i = 0; i < _defaultRoutes.Length; i++)
+            {
+                if (_defaultRoutes[i].IsMatch(user))
+                {
+                    return (PlayerTargets)(1 << i);
+                }
+            }
+
+            return PlayerTargets.None;
+        }
+    }
+
+    public class UserOverridePreference
+    {
+        [XmlAttribute("name")]
+        public string Name { get; set; }
+
+        [XmlAttribute("player")]
+        public int Player { get; set; }
+    }
+
+    internal static class UserOverrideEditor
+    {
+        public static bool TryAssign(
+            IList<UserOverridePreference> overrides,
+            int playerCount,
+            int playerNumber,
+            string user
+        )
+        {
+            string normalizedUser = NormalizeUser(user);
+            if (overrides == null || playerCount < 1 ||
+                playerNumber < 1 || playerNumber > playerCount ||
+                normalizedUser == null)
+            {
+                return false;
+            }
+
+            for (int i = overrides.Count - 1; i >= 0; i--)
+            {
+                UserOverridePreference item = overrides[i];
+                if (item != null && string.Equals(
+                    item.Name,
+                    normalizedUser,
+                    StringComparison.OrdinalIgnoreCase
+                ))
+                {
+                    overrides.RemoveAt(i);
+                }
+            }
+
+            overrides.Add(new UserOverridePreference
+            {
+                Name = normalizedUser,
+                Player = playerNumber
+            });
+            return true;
+        }
+
+        internal static string NormalizeUser(string user)
+        {
+            if (string.IsNullOrWhiteSpace(user))
+            {
+                return null;
+            }
+
+            string normalized = user.Trim();
+            return normalized.IndexOf(',') >= 0 ||
+                normalized.IndexOf('*') >= 0 ||
+                normalized.IndexOf('[') >= 0 ||
+                normalized.IndexOf(']') >= 0
+                    ? null
+                    : normalized;
         }
     }
 
@@ -234,6 +316,12 @@ namespace LocalMultiplayerMod
             }
 
             return new UserPattern(PatternKind.Exact, pattern, '\0', '\0');
+        }
+
+        public bool IsExactMatch(string user)
+        {
+            return _kind == PatternKind.Exact &&
+                string.Equals(_value, user, StringComparison.OrdinalIgnoreCase);
         }
 
         public bool IsMatch(string user)

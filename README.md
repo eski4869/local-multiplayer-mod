@@ -18,10 +18,38 @@ rules from `eski4869.LocalMultiplayerMod.Settings.xml`.
 
 ## User routing
 
-Commands carrying a `user` can be assigned to players with exact names,
-prefix patterns, `*`, or an initial range such as `[a-m]*`. A user may match
-more than one player. Commands without a user target Player 1 in Single Player
-mode and are ignored in multiplayer modes.
+Each mode has `DefaultRoutes` for prefix patterns, `*`, or an initial range
+such as `[a-m]*`. `UserOverrides` stores exact user-to-player assignments.
+Overrides take priority over default routes; otherwise the first matching
+default route from Player 1 through Player 4 is selected. Commands without a
+user target Player 1 in Single Player mode and are ignored in multiplayer
+modes.
+
+```xml
+<FourPlayerMode>
+  <DefaultRoutes>
+    <Player1Users>[a-f]*</Player1Users>
+    <Player2Users>[g-m]*</Player2Users>
+    <Player3Users>[n-s]*</Player3Users>
+    <Player4Users>[t-z]*</Player4Users>
+  </DefaultRoutes>
+  <UserOverrides>
+    <User name="z" player="1" />
+  </UserOverrides>
+</FourPlayerMode>
+```
+
+The `local_multiplayer` Broker target can persist an exact override for the
+currently selected mode:
+
+```text
+http://127.0.0.1:8081/command?target=local_multiplayer&user=alice&command=p1
+http://127.0.0.1:8081/command?target=local_multiplayer&user=alice&command=p2
+```
+
+`p1` through `p4` are accepted only when that player exists in the selected
+mode. Assigning an existing user updates its single override. Default routes
+and overrides belonging to other modes are unchanged.
 
 ## Mod API
 
@@ -29,13 +57,15 @@ mode and are ignored in multiplayer modes.
 
 - `GetApiVersion()`
 - `IsActive()`
-- `GetPlayerCount()`
-- `ResolvePlayerMask(string user)`
-- `GetPlayer(int playerNumber)`
-- `SubmitInput(int playerNumber, InputComponent.State held, InputComponent.State pressed)`
+- `ResolvePlayer(string user)`
+- `IsPlayerInCurrentView(PlayerEntity player)`
 
-Consumer mods should resolve this API once at startup. If this mod is absent,
-they should keep their normal Player 1 behavior.
+`ResolvePlayer` is the integration boundary. It resolves user routing to zero or
+one concrete `PlayerEntity`, so consumers do not branch on Player 1 through
+Player 4 or handle routing masks. Consumer mods resolve this optional API once
+at startup. `IsPlayerInCurrentView`
+lets drawing mods render only effects belonging to the active split-screen view.
+If this mod is absent, consumers use their normal single-player resolver.
 
 ## Requirements
 
