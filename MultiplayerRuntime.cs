@@ -1093,7 +1093,14 @@ namespace LocalMultiplayerMod
 
             if (playerCount == 2)
             {
-                DrawTwoPlayerViews();
+                if (ModEntry.TwoPlayerLayout == TwoPlayerLayout.Compact)
+                {
+                    DrawCompactTwoPlayerViews();
+                }
+                else
+                {
+                    DrawTwoPlayerViews();
+                }
             }
             else
             {
@@ -1126,6 +1133,28 @@ namespace LocalMultiplayerMod
                     PlayerTargets[ViewTargetIndexes[i]],
                     new Rectangle(i * HalfWidth, 0, HalfWidth, Height),
                     GetPlayerViewport(player),
+                    Color.White
+                );
+            }
+        }
+
+        private static void DrawCompactTwoPlayerViews()
+        {
+            Game1.instance.GraphicsDevice.Clear(Color.Black);
+            var source = new Rectangle(0, 0, Width, Height);
+            int destinationY = (Height - HalfHeight) / 2;
+
+            for (int i = 0; i < 2; i++)
+            {
+                Game1.spriteBatch.Draw(
+                    PlayerTargets[ViewTargetIndexes[i]],
+                    new Rectangle(
+                        i * HalfWidth,
+                        destinationY,
+                        HalfWidth,
+                        HalfHeight
+                    ),
+                    source,
                     Color.White
                 );
             }

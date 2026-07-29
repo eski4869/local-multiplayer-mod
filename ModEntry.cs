@@ -64,23 +64,41 @@ namespace LocalMultiplayerMod
             get { return PlayerCount > 1; }
         }
 
+        internal static TwoPlayerLayout TwoPlayerLayout
+        {
+            get
+            {
+                EnsurePreferencesLoaded();
+                return _preferences.TwoPlayerLayout;
+            }
+        }
+
         internal static PlayerTargets ResolvePlayerTargets(string user)
         {
             EnsurePreferencesLoaded();
             return _userRouter.Resolve(PlayerCount, user);
         }
 
-        internal static int SetPlayerCount(int playerCount)
+        internal static bool SetPlayerMode(
+            int playerCount,
+            TwoPlayerLayout twoPlayerLayout
+        )
         {
             EnsurePreferencesLoaded();
             if (playerCount != 1 && playerCount != 2 && playerCount != 4)
             {
-                return _preferences.PlayerCount;
+                return false;
             }
 
-            if (_preferences.PlayerCount == playerCount)
+            if (!Enum.IsDefined(typeof(TwoPlayerLayout), twoPlayerLayout))
             {
-                return playerCount;
+                return false;
+            }
+
+            if (_preferences.PlayerCount == playerCount &&
+                _preferences.TwoPlayerLayout == twoPlayerLayout)
+            {
+                return true;
             }
 
             if (playerCount > 1)
@@ -91,14 +109,15 @@ namespace LocalMultiplayerMod
                     JumpKing.Program.crashLog.AddErrorMessage(
                         "Local Multiplayer settings were not loaded: " + error
                     );
-                    return _preferences.PlayerCount;
+                    return false;
                 }
             }
 
             _preferences.PlayerCount = playerCount;
+            _preferences.TwoPlayerLayout = twoPlayerLayout;
             SavePreferences();
             MultiplayerRuntime.SetPlayerCount(playerCount);
-            return playerCount;
+            return true;
         }
 
         [PauseMenuItemSetting]
@@ -357,6 +376,8 @@ namespace LocalMultiplayerMod
     public class LocalMultiplayerPreferences
     {
         public int PlayerCount { get; set; } = 1;
+        public TwoPlayerLayout TwoPlayerLayout { get; set; } =
+            TwoPlayerLayout.FullHeight;
         public SingleModePreferences SingleMode { get; set; } =
             new SingleModePreferences();
         public MultiplayerModePreferences MultiplayerMode { get; set; } =
@@ -384,11 +405,17 @@ namespace LocalMultiplayerMod
         public string Player4Users { get; set; } = "[t-z]*";
     }
 
+    public enum TwoPlayerLayout
+    {
+        FullHeight,
+        Compact
+    }
+
     public class LocalMultiplayerModeOption : IOptions
     {
         public LocalMultiplayerModeOption() : base(
-            3,
-            PlayerCountToOption(ModEntry.PlayerCount),
+            4,
+            ModeToOption(ModEntry.PlayerCount, ModEntry.TwoPlayerLayout),
             IOptions.EdgeMode.Wrap
         )
         {
@@ -406,6 +433,8 @@ namespace LocalMultiplayerMod
                 case 1:
                     return "Local Multiplayer: 2 Players";
                 case 2:
+                    return "Local Multiplayer: 2 Players (Compact)";
+                case 3:
                     return "Local Multiplayer: 4 Players";
                 default:
                     return "Local Multiplayer: Single Player";
@@ -415,17 +444,47 @@ namespace LocalMultiplayerMod
         protected override void OnOptionChange(int option)
         {
             int playerCount = OptionToPlayerCount(option);
-            CurrentOption = PlayerCountToOption(ModEntry.SetPlayerCount(playerCount));
+            TwoPlayerLayout layout = OptionToLayout(option);
+            if (ModEntry.SetPlayerMode(playerCount, layout))
+            {
+                CurrentOption = option;
+                return;
+            }
+
+            CurrentOption = ModeToOption(
+                ModEntry.PlayerCount,
+                ModEntry.TwoPlayerLayout
+            );
         }
 
-        private static int PlayerCountToOption(int playerCount)
+        private static int ModeToOption(
+            int playerCount,
+            TwoPlayerLayout layout
+        )
         {
-            return playerCount == 4 ? 2 : playerCount == 2 ? 1 : 0;
+            if (playerCount == 4)
+            {
+                return 3;
+            }
+
+            if (playerCount == 2)
+            {
+                return layout == TwoPlayerLayout.Compact ? 2 : 1;
+            }
+
+            return 0;
         }
 
         private static int OptionToPlayerCount(int option)
         {
-            return option == 2 ? 4 : option == 1 ? 2 : 1;
+            return option == 3 ? 4 : option == 1 || option == 2 ? 2 : 1;
+        }
+
+        private static TwoPlayerLayout OptionToLayout(int option)
+        {
+            return option == 2
+                ? TwoPlayerLayout.Compact
+                : TwoPlayerLayout.FullHeight;
         }
     }
 }
