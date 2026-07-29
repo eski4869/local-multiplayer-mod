@@ -55,6 +55,7 @@
 		</Reference>
 	</ItemGroup>
 	<ItemGroup>
+		<Compile Include="BrokerCommandClient.cs" />
 		<Compile Include="ModEntry.cs" />
 		<Compile Include="LocalMultiplayerApi.cs" />
 		<Compile Include="MultiplayerRuntime.cs" />

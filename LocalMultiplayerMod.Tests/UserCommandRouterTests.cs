@@ -71,7 +71,7 @@ namespace LocalMultiplayerMod.Tests
         }
 
         [TestMethod]
-        public void FourPlayerModeCanTargetMultiplePlayers()
+        public void FourPlayerModePrefersExactMatch()
         {
             var router = new UserCommandRouter(
                 "*",
@@ -84,13 +84,32 @@ namespace LocalMultiplayerMod.Tests
             );
 
             Assert.AreEqual(
-                PlayerTargets.Player1 | PlayerTargets.Player3 | PlayerTargets.Player4,
+                PlayerTargets.Player3,
                 router.Resolve(4, "eski4869")
             );
         }
 
         [TestMethod]
-        public void MatchingBothListsTargetsBothPlayers()
+        public void OverlappingPatternsReturnFirstPlayer()
+        {
+            var router = new UserCommandRouter(
+                "*",
+                "*",
+                "*",
+                "eski*",
+                "other",
+                "team*",
+                "eski*"
+            );
+
+            Assert.AreEqual(
+                PlayerTargets.Player1,
+                router.Resolve(4, "eski4869")
+            );
+        }
+
+        [TestMethod]
+        public void ExactMatchTakesPriorityOverAnEarlierWildcard()
         {
             var router = new UserCommandRouter("*", "eski*", "other");
 
@@ -98,9 +117,61 @@ namespace LocalMultiplayerMod.Tests
 
             router = new UserCommandRouter("*", "eski*", "eski4869");
             Assert.AreEqual(
-                PlayerTargets.Player1 | PlayerTargets.Player2,
+                PlayerTargets.Player2,
                 router.Resolve(true, "eski4869")
             );
+        }
+
+        [TestMethod]
+        public void DuplicateExactMatchesReturnFirstPlayer()
+        {
+            var router = new UserCommandRouter("*", "alice", "alice");
+
+            Assert.AreEqual(
+                PlayerTargets.Player1,
+                router.Resolve(true, "alice")
+            );
+        }
+
+        [TestMethod]
+        public void AssignmentMovesExactUserAndPreservesPatterns()
+        {
+            string[] updated;
+            Assert.IsTrue(UserAllowListEditor.TryAssign(
+                new[] { "[a-m]*,alice", "[n-z]*" },
+                2,
+                "Alice",
+                out updated
+            ));
+
+            CollectionAssert.AreEqual(
+                new[] { "[a-m]*", "[n-z]*,Alice" },
+                updated
+            );
+
+            var router = new UserCommandRouter("*", updated[0], updated[1]);
+            Assert.AreEqual(
+                PlayerTargets.Player2,
+                router.Resolve(true, "alice")
+            );
+        }
+
+        [TestMethod]
+        public void AssignmentRejectsPatternSyntaxAndInvalidPlayer()
+        {
+            string[] updated;
+            Assert.IsFalse(UserAllowListEditor.TryAssign(
+                new[] { "*", "*" },
+                3,
+                "alice",
+                out updated
+            ));
+            Assert.IsFalse(UserAllowListEditor.TryAssign(
+                new[] { "*", "*" },
+                1,
+                "team_*",
+                out updated
+            ));
         }
 
         [TestMethod]

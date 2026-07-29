@@ -16,12 +16,8 @@ namespace LocalMultiplayerMod
     internal sealed class UserCommandRouter
     {
         private readonly UserPatternList _singlePlayer1;
-        private readonly UserPatternList _multiplayerPlayer1;
-        private readonly UserPatternList _multiplayerPlayer2;
-        private readonly UserPatternList _fourPlayer1;
-        private readonly UserPatternList _fourPlayer2;
-        private readonly UserPatternList _fourPlayer3;
-        private readonly UserPatternList _fourPlayer4;
+        private readonly UserPatternList[] _multiplayerPlayers;
+        private readonly UserPatternList[] _fourPlayers;
 
         public UserCommandRouter(
             string singlePlayer1,
@@ -50,12 +46,18 @@ namespace LocalMultiplayerMod
         )
         {
             _singlePlayer1 = new UserPatternList(singlePlayer1);
-            _multiplayerPlayer1 = new UserPatternList(multiplayerPlayer1);
-            _multiplayerPlayer2 = new UserPatternList(multiplayerPlayer2);
-            _fourPlayer1 = new UserPatternList(fourPlayer1);
-            _fourPlayer2 = new UserPatternList(fourPlayer2);
-            _fourPlayer3 = new UserPatternList(fourPlayer3);
-            _fourPlayer4 = new UserPatternList(fourPlayer4);
+            _multiplayerPlayers = new[]
+            {
+                new UserPatternList(multiplayerPlayer1),
+                new UserPatternList(multiplayerPlayer2)
+            };
+            _fourPlayers = new[]
+            {
+                new UserPatternList(fourPlayer1),
+                new UserPatternList(fourPlayer2),
+                new UserPatternList(fourPlayer3),
+                new UserPatternList(fourPlayer4)
+            };
         }
 
         public PlayerTargets Resolve(bool multiplayerEnabled, string user)
@@ -69,12 +71,10 @@ namespace LocalMultiplayerMod
 
             if (playerCount == 1)
             {
-                if (normalizedUser == null || _singlePlayer1.IsMatch(normalizedUser))
-                {
-                    return PlayerTargets.Player1;
-                }
-
-                return PlayerTargets.None;
+                return normalizedUser == null ||
+                    _singlePlayer1.IsMatch(normalizedUser)
+                    ? PlayerTargets.Player1
+                    : PlayerTargets.None;
             }
 
             if (normalizedUser == null)
@@ -82,49 +82,111 @@ namespace LocalMultiplayerMod
                 return PlayerTargets.None;
             }
 
-            PlayerTargets targets = PlayerTargets.None;
+            UserPatternList[] players = playerCount == 2
+                ? _multiplayerPlayers
+                : _fourPlayers;
 
-            if (playerCount == 2)
+            for (int i = 0; i < players.Length; i++)
             {
-                if (_multiplayerPlayer1.IsMatch(normalizedUser))
+                if (players[i].IsExactMatch(normalizedUser))
                 {
-                    targets |= PlayerTargets.Player1;
+                    return (PlayerTargets)(1 << i);
                 }
+            }
 
-                if (_multiplayerPlayer2.IsMatch(normalizedUser))
+            for (int i = 0; i < players.Length; i++)
+            {
+                if (players[i].IsMatch(normalizedUser))
                 {
-                    targets |= PlayerTargets.Player2;
+                    return (PlayerTargets)(1 << i);
                 }
-
-                return targets;
             }
 
-            if (_fourPlayer1.IsMatch(normalizedUser))
-            {
-                targets |= PlayerTargets.Player1;
-            }
-
-            if (_fourPlayer2.IsMatch(normalizedUser))
-            {
-                targets |= PlayerTargets.Player2;
-            }
-
-            if (_fourPlayer3.IsMatch(normalizedUser))
-            {
-                targets |= PlayerTargets.Player3;
-            }
-
-            if (_fourPlayer4.IsMatch(normalizedUser))
-            {
-                targets |= PlayerTargets.Player4;
-            }
-
-            return targets;
+            return PlayerTargets.None;
         }
 
         private static string NormalizeUser(string user)
         {
             return string.IsNullOrWhiteSpace(user) ? null : user.Trim();
+        }
+    }
+
+    internal static class UserAllowListEditor
+    {
+        public static bool TryAssign(
+            string[] allowLists,
+            int playerNumber,
+            string user,
+            out string[] updated
+        )
+        {
+            updated = null;
+            string normalizedUser = NormalizeExactUser(user);
+            int targetIndex = playerNumber - 1;
+            if (allowLists == null ||
+                targetIndex < 0 ||
+                targetIndex >= allowLists.Length ||
+                normalizedUser == null)
+            {
+                return false;
+            }
+
+            updated = new string[allowLists.Length];
+            for (int i = 0; i < allowLists.Length; i++)
+            {
+                updated[i] = RemoveExact(allowLists[i], normalizedUser);
+            }
+
+            updated[targetIndex] = AppendExact(
+                updated[targetIndex],
+                normalizedUser
+            );
+            return true;
+        }
+
+        private static string NormalizeExactUser(string user)
+        {
+            if (string.IsNullOrWhiteSpace(user))
+            {
+                return null;
+            }
+
+            string normalized = user.Trim();
+            return normalized.IndexOf(',') >= 0 ||
+                normalized.IndexOf('*') >= 0 ||
+                normalized.IndexOf('[') >= 0 ||
+                normalized.IndexOf(']') >= 0
+                ? null
+                : normalized;
+        }
+
+        private static string RemoveExact(string text, string user)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return string.Empty;
+            }
+
+            string[] parts = text.Split(',');
+            var kept = new List<string>();
+            for (int i = 0; i < parts.Length; i++)
+            {
+                string entry = parts[i].Trim();
+                if (entry.Length > 0 &&
+                    !string.Equals(entry, user, StringComparison.OrdinalIgnoreCase))
+                {
+                    kept.Add(entry);
+                }
+            }
+
+            return string.Join(",", kept.ToArray());
+        }
+
+        private static string AppendExact(string text, string user)
+        {
+            return string.IsNullOrWhiteSpace(text)
+                ? user
+                : text + "," + user;
         }
     }
 
@@ -153,6 +215,19 @@ namespace LocalMultiplayerMod
             }
 
             _patterns = patterns.ToArray();
+        }
+
+        public bool IsExactMatch(string user)
+        {
+            for (int i = 0; i < _patterns.Length; i++)
+            {
+                if (_patterns[i].IsExactMatch(user))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         public bool IsMatch(string user)
@@ -234,6 +309,12 @@ namespace LocalMultiplayerMod
             }
 
             return new UserPattern(PatternKind.Exact, pattern, '\0', '\0');
+        }
+
+        public bool IsExactMatch(string user)
+        {
+            return _kind == PatternKind.Exact &&
+                string.Equals(_value, user, StringComparison.OrdinalIgnoreCase);
         }
 
         public bool IsMatch(string user)

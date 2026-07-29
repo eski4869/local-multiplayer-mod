@@ -278,9 +278,6 @@ namespace LocalMultiplayerMod
 
         private static void StopAdditionalPlayers()
         {
-            LocalMultiplayerApi.ClearInput(2);
-            LocalMultiplayerApi.ClearInput(3);
-            LocalMultiplayerApi.ClearInput(4);
             MultiplayerSplitRenderer.Release();
 
             for (int i = 0; i < AdditionalPlayers.Length; i++)
@@ -304,7 +301,6 @@ namespace LocalMultiplayerMod
                 playerNumber++)
             {
                 int index = playerNumber - 2;
-                LocalMultiplayerApi.ClearInput(playerNumber);
                 if (AdditionalPlayers[index] != null && AdditionalPlayers[index].IsAlive)
                 {
                     AdditionalPlayers[index].Destroy();
@@ -544,7 +540,6 @@ namespace LocalMultiplayerMod
     {
         public static bool Prefix(
             InputComponent __instance,
-            MethodBase __originalMethod,
             ref InputComponent.State __result
         )
         {
@@ -554,8 +549,7 @@ namespace LocalMultiplayerMod
                 return true;
             }
 
-            bool pressed = __originalMethod.Name == "GetPressedState";
-            __result = LocalMultiplayerApi.GetInputState(playerNumber, pressed);
+            __result = new InputComponent.State();
             return false;
         }
     }

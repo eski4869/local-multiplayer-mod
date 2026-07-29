@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using System.Xml.Serialization;
@@ -17,6 +18,7 @@ namespace LocalMultiplayerMod
     {
         private const string SettingsFileName =
             "eski4869.LocalMultiplayerMod.Settings.xml";
+        internal const string CommandTarget = "local_multiplayer";
 
         private static Harmony _harmony;
         private static LocalMultiplayerPreferences _preferences;
@@ -28,6 +30,7 @@ namespace LocalMultiplayerMod
         {
             EnsurePreferencesLoaded();
             EnsurePatched();
+            BrokerCommandClient.Register(CommandTarget);
         }
 
         [OnLevelStart]
@@ -35,6 +38,7 @@ namespace LocalMultiplayerMod
         {
             EnsurePreferencesLoaded();
             EnsurePatched();
+            BrokerCommandClient.Register(CommandTarget);
             MultiplayerRuntime.OnLevelStart();
         }
 
@@ -77,6 +81,100 @@ namespace LocalMultiplayerMod
         {
             EnsurePreferencesLoaded();
             return _userRouter.Resolve(PlayerCount, user);
+        }
+
+        internal static void ProcessBrokerCommand()
+        {
+            IReadOnlyDictionary<string, string> parameters;
+            if (!BrokerCommandClient.TryDequeue(
+                CommandTarget,
+                out parameters
+            ))
+            {
+                return;
+            }
+
+            string user;
+            string command;
+            if (!parameters.TryGetValue("user", out user) ||
+                !parameters.TryGetValue("command", out command))
+            {
+                return;
+            }
+
+            command = (command ?? string.Empty).Trim().ToLowerInvariant();
+            if (command.Length != 2 || command[0] != 'p' ||
+                command[1] < '1' || command[1] > '4')
+            {
+                return;
+            }
+
+            AssignUserToPlayer(command[1] - '0', user);
+        }
+
+        internal static bool AssignUserToPlayer(int playerNumber, string user)
+        {
+            EnsurePreferencesLoaded();
+
+            string[] allowLists;
+            int playerCount = _preferences.PlayerCount;
+            if (playerCount == 1)
+            {
+                allowLists = new[]
+                {
+                    _preferences.SingleMode.Player1Users
+                };
+            }
+            else if (playerCount == 2)
+            {
+                allowLists = new[]
+                {
+                    _preferences.MultiplayerMode.Player1Users,
+                    _preferences.MultiplayerMode.Player2Users
+                };
+            }
+            else
+            {
+                allowLists = new[]
+                {
+                    _preferences.FourPlayerMode.Player1Users,
+                    _preferences.FourPlayerMode.Player2Users,
+                    _preferences.FourPlayerMode.Player3Users,
+                    _preferences.FourPlayerMode.Player4Users
+                };
+            }
+
+            string[] updated;
+            if (!UserAllowListEditor.TryAssign(
+                allowLists,
+                playerNumber,
+                user,
+                out updated
+            ))
+            {
+                return false;
+            }
+
+            if (playerCount == 1)
+            {
+                _preferences.SingleMode.Player1Users = updated[0];
+            }
+            else if (playerCount == 2)
+            {
+                _preferences.MultiplayerMode.Player1Users = updated[0];
+                _preferences.MultiplayerMode.Player2Users = updated[1];
+            }
+            else
+            {
+                _preferences.FourPlayerMode.Player1Users = updated[0];
+                _preferences.FourPlayerMode.Player2Users = updated[1];
+                _preferences.FourPlayerMode.Player3Users = updated[2];
+                _preferences.FourPlayerMode.Player4Users = updated[3];
+            }
+
+            _userRouter = CreateUserRouter(_preferences);
+            SavePreferences();
+            return true;
         }
 
         internal static bool SetPlayerMode(
@@ -369,6 +467,7 @@ namespace LocalMultiplayerMod
     {
         public static void Prefix()
         {
+            ModEntry.ProcessBrokerCommand();
             MultiplayerRuntime.SynchronizeBlockBehaviours();
         }
     }

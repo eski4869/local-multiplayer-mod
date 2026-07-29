@@ -4,12 +4,7 @@ namespace LocalMultiplayerMod
 {
     public static class LocalMultiplayerApi
     {
-        public const int ApiVersion = 2;
-        private const int MaximumPlayers = 4;
-        private static readonly InputComponent.State[] HeldStates =
-            new InputComponent.State[MaximumPlayers];
-        private static readonly InputComponent.State[] PressedStates =
-            new InputComponent.State[MaximumPlayers];
+        public const int ApiVersion = 3;
         private static int _currentViewPlayerMask = 1;
 
         public static int GetApiVersion()
@@ -22,95 +17,28 @@ namespace LocalMultiplayerMod
             return MultiplayerRuntime.IsActive;
         }
 
-        public static int GetPlayerCount()
+        public static PlayerEntity ResolvePlayer(string user)
         {
-            return ModEntry.PlayerCount;
-        }
-
-        public static int ResolvePlayerMask(string user)
-        {
-            return (int)ModEntry.ResolvePlayerTargets(user);
-        }
-
-        public static PlayerEntity[] ResolvePlayers(string user)
-        {
-            int playerMask = ResolvePlayerMask(user);
-            var players = new PlayerEntity[MaximumPlayers];
-            int count = 0;
-
-            for (int playerNumber = 1;
-                playerNumber <= MaximumPlayers;
-                playerNumber++)
+            switch (ModEntry.ResolvePlayerTargets(user))
             {
-                int playerFlag = 1 << (playerNumber - 1);
-                if ((playerMask & playerFlag) == 0)
-                {
-                    continue;
-                }
-
-                PlayerEntity player = GetPlayer(playerNumber);
-                if (player != null)
-                {
-                    players[count++] = player;
-                }
+                case PlayerTargets.Player1:
+                    return MultiplayerRuntime.GetPlayer(1);
+                case PlayerTargets.Player2:
+                    return MultiplayerRuntime.GetPlayer(2);
+                case PlayerTargets.Player3:
+                    return MultiplayerRuntime.GetPlayer(3);
+                case PlayerTargets.Player4:
+                    return MultiplayerRuntime.GetPlayer(4);
+                default:
+                    return null;
             }
-
-            var result = new PlayerEntity[count];
-            for (int i = 0; i < count; i++)
-            {
-                result[i] = players[i];
-            }
-
-            return result;
         }
 
-        public static PlayerEntity GetPlayer(int playerNumber)
+        public static bool IsPlayerInCurrentView(PlayerEntity player)
         {
-            return MultiplayerRuntime.GetPlayer(playerNumber);
-        }
-
-        public static int GetCurrentViewPlayerMask()
-        {
-            return _currentViewPlayerMask;
-        }
-
-        public static void SubmitInput(
-            int playerNumber,
-            InputComponent.State held,
-            InputComponent.State pressed
-        )
-        {
-            int index = playerNumber - 1;
-            if (index < 1 || index >= MaximumPlayers)
-            {
-                return;
-            }
-
-            HeldStates[index] = held;
-            PressedStates[index] = pressed;
-        }
-
-        internal static InputComponent.State GetInputState(int playerNumber, bool pressed)
-        {
-            int index = playerNumber - 1;
-            if (index < 1 || index >= MaximumPlayers)
-            {
-                return new InputComponent.State();
-            }
-
-            return pressed ? PressedStates[index] : HeldStates[index];
-        }
-
-        internal static void ClearInput(int playerNumber)
-        {
-            int index = playerNumber - 1;
-            if (index < 1 || index >= MaximumPlayers)
-            {
-                return;
-            }
-
-            HeldStates[index] = new InputComponent.State();
-            PressedStates[index] = new InputComponent.State();
+            int playerNumber = MultiplayerRuntime.GetPlayerNumber(player);
+            return playerNumber > 0 &&
+                (_currentViewPlayerMask & (1 << (playerNumber - 1))) != 0;
         }
 
         internal static void SetCurrentViewPlayerMask(int mask)
