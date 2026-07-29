@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LocalMultiplayerPreferences xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <PlayerCount>1</PlayerCount>
+  <SingleMode>
+    <Player1Users>*</Player1Users>
+  </SingleMode>
+  <MultiplayerMode>
+    <Player1Users>[a-m]*</Player1Users>
+    <Player2Users>[n-z]*</Player2Users>
+  </MultiplayerMode>
+  <FourPlayerMode>
+    <Player1Users>[a-f]*</Player1Users>
+    <Player2Users>[g-m]*</Player2Users>
+    <Player3Users>[n-s]*</Player3Users>
+    <Player4Users>[t-z]*</Player4Users>
+  </FourPlayerMode>
+</LocalMultiplayerPreferences>
