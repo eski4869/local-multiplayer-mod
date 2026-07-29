@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LocalMultiplayerPreferences xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
   <PlayerCount>1</PlayerCount>
+  <TwoPlayerLayout>FullHeight</TwoPlayerLayout>
   <SingleMode>
     <Player1Users>*</Player1Users>
   </SingleMode>

@@ -10,6 +10,7 @@ Use `Local Multiplayer` in the main or pause menu to select:
 
 - Single Player
 - 2 Players
+- 2 Players (Compact), with two 240 x 180 views and black bars above and below
 - 4 Players
 
 Changing from Single Player to a multiplayer mode reloads the user-routing
