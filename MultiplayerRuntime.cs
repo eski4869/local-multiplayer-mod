@@ -819,18 +819,24 @@ namespace LocalMultiplayerMod
             {
                 case 2:
                     return new Color(
-                        minimum + chroma * 3 / 4,
-                        minimum,
                         maximum,
+                        minimum + (chroma * 7 + 7) / 15,
+                        minimum,
                         source.A
                     );
                 case 3:
-                    return new Color(maximum, maximum, minimum, source.A);
-                case 4:
                     return new Color(
                         minimum,
                         maximum,
-                        minimum + chroma / 4,
+                        minimum + (chroma + 1) / 3,
+                        source.A
+                    );
+                case 4:
+                    int silver = minimum + (chroma * 82 + 50) / 100;
+                    return new Color(
+                        silver,
+                        silver,
+                        silver,
                         source.A
                     );
                 default:
