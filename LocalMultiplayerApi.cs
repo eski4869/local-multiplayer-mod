@@ -4,7 +4,7 @@ namespace LocalMultiplayerMod
 {
     public static class LocalMultiplayerApi
     {
-        public const int ApiVersion = 1;
+        public const int ApiVersion = 2;
         private const int MaximumPlayers = 4;
         private static readonly InputComponent.State[] HeldStates =
             new InputComponent.State[MaximumPlayers];
@@ -30,6 +30,38 @@ namespace LocalMultiplayerMod
         public static int ResolvePlayerMask(string user)
         {
             return (int)ModEntry.ResolvePlayerTargets(user);
+        }
+
+        public static PlayerEntity[] ResolvePlayers(string user)
+        {
+            int playerMask = ResolvePlayerMask(user);
+            var players = new PlayerEntity[MaximumPlayers];
+            int count = 0;
+
+            for (int playerNumber = 1;
+                playerNumber <= MaximumPlayers;
+                playerNumber++)
+            {
+                int playerFlag = 1 << (playerNumber - 1);
+                if ((playerMask & playerFlag) == 0)
+                {
+                    continue;
+                }
+
+                PlayerEntity player = GetPlayer(playerNumber);
+                if (player != null)
+                {
+                    players[count++] = player;
+                }
+            }
+
+            var result = new PlayerEntity[count];
+            for (int i = 0; i < count; i++)
+            {
+                result[i] = players[i];
+            }
+
+            return result;
         }
 
         public static PlayerEntity GetPlayer(int playerNumber)

@@ -30,12 +30,16 @@ mode and are ignored in multiplayer modes.
 - `GetApiVersion()`
 - `IsActive()`
 - `GetPlayerCount()`
+- `ResolvePlayers(string user)`
 - `ResolvePlayerMask(string user)`
 - `GetPlayer(int playerNumber)`
 - `SubmitInput(int playerNumber, InputComponent.State held, InputComponent.State pressed)`
 
-Consumer mods should resolve this API once at startup. If this mod is absent,
-they should keep their normal Player 1 behavior.
+`ResolvePlayers` is the preferred integration boundary. It resolves user routing
+to concrete `PlayerEntity` instances, so consumer mods can apply one operation to
+every returned player without branching on Player 1 through Player 4. Consumer
+mods should resolve this optional API once at startup. If this mod is absent,
+they should use their normal single-player resolver.
 
 ## Requirements
 
