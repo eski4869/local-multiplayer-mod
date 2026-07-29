@@ -260,9 +260,9 @@ namespace LocalMultiplayerMod
                     typeof(PlayerEntity),
                     "SetSprite"
                 );
-                MethodInfo spritePrefix = AccessTools.Method(
+                MethodInfo spritePostfix = AccessTools.Method(
                     typeof(AdditionalPlayerSpritePatch),
-                    "Prefix"
+                    "Postfix"
                 );
                 MethodInfo entityUpdateComponents = AccessTools.Method(
                     typeof(Entity),
@@ -295,7 +295,7 @@ namespace LocalMultiplayerMod
                     inputGetState == null || inputGetPressedState == null ||
                     inputStatePrefix == null || playerUpdate == null ||
                     playerUpdatePrefix == null || playerSetSprite == null ||
-                    spritePrefix == null || entityUpdateComponents == null ||
+                    spritePostfix == null || entityUpdateComponents == null ||
                     screenPrefix == null || screenPostfix == null ||
                     jumpGameDraw == null || jumpGameDrawPrefix == null ||
                     checkWin == null || checkWinPostfix == null)
@@ -311,7 +311,7 @@ namespace LocalMultiplayerMod
                 _harmony.Patch(inputGetState, prefix: new HarmonyMethod(inputStatePrefix));
                 _harmony.Patch(inputGetPressedState, prefix: new HarmonyMethod(inputStatePrefix));
                 _harmony.Patch(playerUpdate, prefix: new HarmonyMethod(playerUpdatePrefix));
-                _harmony.Patch(playerSetSprite, prefix: new HarmonyMethod(spritePrefix));
+                _harmony.Patch(playerSetSprite, postfix: new HarmonyMethod(spritePostfix));
                 _harmony.Patch(
                     entityUpdateComponents,
                     prefix: new HarmonyMethod(screenPrefix),

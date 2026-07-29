@@ -603,12 +603,12 @@ namespace LocalMultiplayerMod
 
     internal static class AdditionalPlayerSpritePatch
     {
-        public static void Prefix(PlayerEntity __instance, ref Sprite p_sprite)
+        public static void Postfix(PlayerEntity __instance, ref Sprite ___m_sprite)
         {
             int playerNumber = MultiplayerRuntime.GetSpritePlayerNumber(__instance);
             if (playerNumber > 1)
             {
-                p_sprite = PlayerSpriteFactory.Get(p_sprite, playerNumber);
+                ___m_sprite = PlayerSpriteFactory.Get(___m_sprite, playerNumber);
             }
         }
     }
