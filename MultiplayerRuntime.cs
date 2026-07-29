@@ -23,7 +23,6 @@ namespace LocalMultiplayerMod
         private static bool _levelStarted;
         private static bool _raceComplete;
         private static bool _blockBehavioursSynchronized;
-        private static int _creatingPlayerNumber;
         private static readonly FieldInfo BlockBehaviourLookupField = AccessTools.Field(
             typeof(BodyComp),
             "m_blockBehaviourLookup"
@@ -134,11 +133,6 @@ namespace LocalMultiplayerMod
                 GetPlayerNumber(input.gameObject as PlayerEntity);
         }
 
-        public static int GetSpritePlayerNumber(PlayerEntity player)
-        {
-            return _creatingPlayerNumber > 1 ? _creatingPlayerNumber : GetPlayerNumber(player);
-        }
-
         public static void FinishRace()
         {
             _raceComplete = true;
@@ -239,7 +233,6 @@ namespace LocalMultiplayerMod
 
                 try
                 {
-                    _creatingPlayerNumber = playerNumber;
                     PlayerEntity player = new PlayerEntity();
                     AdditionalPlayers[index] = player;
                     PlayerSpriteFactory.Prepare(playerNumber);
@@ -268,10 +261,6 @@ namespace LocalMultiplayerMod
                     JumpKing.Program.crashLog.AddErrorMessage(
                         "Local Multiplayer player " + playerNumber + " start failed: " + ex.Message
                     );
-                }
-                finally
-                {
-                    _creatingPlayerNumber = 0;
                 }
             }
         }
@@ -601,14 +590,18 @@ namespace LocalMultiplayerMod
         }
     }
 
-    internal static class AdditionalPlayerSpritePatch
+    internal static class AdditionalPlayerDrawPatch
     {
-        public static void Postfix(PlayerEntity __instance, ref Sprite ___m_sprite)
+        public static void Prefix(PlayerEntity __instance, ref Sprite ___m_sprite)
         {
-            int playerNumber = MultiplayerRuntime.GetSpritePlayerNumber(__instance);
+            int playerNumber = MultiplayerRuntime.GetPlayerNumber(__instance);
             if (playerNumber > 1)
             {
-                ___m_sprite = PlayerSpriteFactory.Get(___m_sprite, playerNumber);
+                PlayerSpriteFactory.ApplyForDraw(
+                    __instance,
+                    ref ___m_sprite,
+                    playerNumber
+                );
             }
         }
     }
@@ -636,6 +629,25 @@ namespace LocalMultiplayerMod
             CreateLayeredSpriteCaches();
         private static readonly Dictionary<Texture2D, Texture2D>[] Textures =
             CreateTextureCaches();
+        private static readonly Dictionary<PlayerEntity, Sprite> AppliedDrawSprites =
+            new Dictionary<PlayerEntity, Sprite>();
+
+        public static void ApplyForDraw(
+            PlayerEntity player,
+            ref Sprite sprite,
+            int playerNumber
+        )
+        {
+            Sprite applied;
+            if (AppliedDrawSprites.TryGetValue(player, out applied) &&
+                ReferenceEquals(applied, sprite))
+            {
+                return;
+            }
+
+            sprite = Get(sprite, playerNumber);
+            AppliedDrawSprites[player] = sprite;
+        }
 
         public static Sprite Get(Sprite source, int playerNumber)
         {
@@ -709,6 +721,8 @@ namespace LocalMultiplayerMod
                 LayeredSprites[i].Clear();
                 Textures[i].Clear();
             }
+
+            AppliedDrawSprites.Clear();
         }
 
         private static Sprite GetLayeredSprite(

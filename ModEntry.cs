@@ -116,60 +116,29 @@ namespace LocalMultiplayerMod
         {
             EnsurePreferencesLoaded();
 
-            string[] allowLists;
             int playerCount = _preferences.PlayerCount;
+            List<UserOverridePreference> overrides;
             if (playerCount == 1)
             {
-                allowLists = new[]
-                {
-                    _preferences.SingleMode.Player1Users
-                };
+                overrides = _preferences.SingleMode.UserOverrides;
             }
             else if (playerCount == 2)
             {
-                allowLists = new[]
-                {
-                    _preferences.MultiplayerMode.Player1Users,
-                    _preferences.MultiplayerMode.Player2Users
-                };
+                overrides = _preferences.MultiplayerMode.UserOverrides;
             }
             else
             {
-                allowLists = new[]
-                {
-                    _preferences.FourPlayerMode.Player1Users,
-                    _preferences.FourPlayerMode.Player2Users,
-                    _preferences.FourPlayerMode.Player3Users,
-                    _preferences.FourPlayerMode.Player4Users
-                };
+                overrides = _preferences.FourPlayerMode.UserOverrides;
             }
 
-            string[] updated;
-            if (!UserAllowListEditor.TryAssign(
-                allowLists,
+            if (!UserOverrideEditor.TryAssign(
+                overrides,
+                playerCount,
                 playerNumber,
-                user,
-                out updated
+                user
             ))
             {
                 return false;
-            }
-
-            if (playerCount == 1)
-            {
-                _preferences.SingleMode.Player1Users = updated[0];
-            }
-            else if (playerCount == 2)
-            {
-                _preferences.MultiplayerMode.Player1Users = updated[0];
-                _preferences.MultiplayerMode.Player2Users = updated[1];
-            }
-            else
-            {
-                _preferences.FourPlayerMode.Player1Users = updated[0];
-                _preferences.FourPlayerMode.Player2Users = updated[1];
-                _preferences.FourPlayerMode.Player3Users = updated[2];
-                _preferences.FourPlayerMode.Player4Users = updated[3];
             }
 
             _userRouter = CreateUserRouter(_preferences);
@@ -256,13 +225,13 @@ namespace LocalMultiplayerMod
                     typeof(AdditionalPlayerSaveUpdatePatch),
                     "Prefix"
                 );
-                MethodInfo playerSetSprite = AccessTools.Method(
+                MethodInfo playerDraw = AccessTools.Method(
                     typeof(PlayerEntity),
-                    "SetSprite"
+                    "Draw"
                 );
-                MethodInfo spritePostfix = AccessTools.Method(
-                    typeof(AdditionalPlayerSpritePatch),
-                    "Postfix"
+                MethodInfo playerDrawPrefix = AccessTools.Method(
+                    typeof(AdditionalPlayerDrawPatch),
+                    "Prefix"
                 );
                 MethodInfo entityUpdateComponents = AccessTools.Method(
                     typeof(Entity),
@@ -294,8 +263,8 @@ namespace LocalMultiplayerMod
                 if (gameUpdate == null || gameUpdatePrefix == null ||
                     inputGetState == null || inputGetPressedState == null ||
                     inputStatePrefix == null || playerUpdate == null ||
-                    playerUpdatePrefix == null || playerSetSprite == null ||
-                    spritePostfix == null || entityUpdateComponents == null ||
+                    playerUpdatePrefix == null || playerDraw == null ||
+                    playerDrawPrefix == null || entityUpdateComponents == null ||
                     screenPrefix == null || screenPostfix == null ||
                     jumpGameDraw == null || jumpGameDrawPrefix == null ||
                     checkWin == null || checkWinPostfix == null)
@@ -311,7 +280,7 @@ namespace LocalMultiplayerMod
                 _harmony.Patch(inputGetState, prefix: new HarmonyMethod(inputStatePrefix));
                 _harmony.Patch(inputGetPressedState, prefix: new HarmonyMethod(inputStatePrefix));
                 _harmony.Patch(playerUpdate, prefix: new HarmonyMethod(playerUpdatePrefix));
-                _harmony.Patch(playerSetSprite, postfix: new HarmonyMethod(spritePostfix));
+                _harmony.Patch(playerDraw, prefix: new HarmonyMethod(playerDrawPrefix));
                 _harmony.Patch(
                     entityUpdateComponents,
                     prefix: new HarmonyMethod(screenPrefix),
@@ -414,13 +383,25 @@ namespace LocalMultiplayerMod
         )
         {
             return new UserCommandRouter(
-                preferences.SingleMode.Player1Users,
-                preferences.MultiplayerMode.Player1Users,
-                preferences.MultiplayerMode.Player2Users,
-                preferences.FourPlayerMode.Player1Users,
-                preferences.FourPlayerMode.Player2Users,
-                preferences.FourPlayerMode.Player3Users,
-                preferences.FourPlayerMode.Player4Users
+                new[]
+                {
+                    preferences.SingleMode.DefaultRoutes.Player1Users
+                },
+                preferences.SingleMode.UserOverrides,
+                new[]
+                {
+                    preferences.MultiplayerMode.DefaultRoutes.Player1Users,
+                    preferences.MultiplayerMode.DefaultRoutes.Player2Users
+                },
+                preferences.MultiplayerMode.UserOverrides,
+                new[]
+                {
+                    preferences.FourPlayerMode.DefaultRoutes.Player1Users,
+                    preferences.FourPlayerMode.DefaultRoutes.Player2Users,
+                    preferences.FourPlayerMode.DefaultRoutes.Player3Users,
+                    preferences.FourPlayerMode.DefaultRoutes.Player4Users
+                },
+                preferences.FourPlayerMode.UserOverrides
             );
         }
 
@@ -432,15 +413,27 @@ namespace LocalMultiplayerMod
             {
                 preferences.SingleMode = new SingleModePreferences();
             }
+            else
+            {
+                preferences.SingleMode.EnsureInitialized();
+            }
 
             if (preferences.MultiplayerMode == null)
             {
                 preferences.MultiplayerMode = new MultiplayerModePreferences();
             }
+            else
+            {
+                preferences.MultiplayerMode.EnsureInitialized();
+            }
 
             if (preferences.FourPlayerMode == null)
             {
                 preferences.FourPlayerMode = new FourPlayerModePreferences();
+            }
+            else
+            {
+                preferences.FourPlayerMode.EnsureInitialized();
             }
         }
 
@@ -487,16 +480,82 @@ namespace LocalMultiplayerMod
 
     public class SingleModePreferences
     {
-        public string Player1Users { get; set; } = "*";
+        public SingleModeDefaultRoutes DefaultRoutes { get; set; } =
+            new SingleModeDefaultRoutes();
+        [XmlArray("UserOverrides")]
+        [XmlArrayItem("User")]
+        public List<UserOverridePreference> UserOverrides { get; set; } =
+            new List<UserOverridePreference>();
+
+        internal void EnsureInitialized()
+        {
+            if (DefaultRoutes == null)
+            {
+                DefaultRoutes = new SingleModeDefaultRoutes();
+            }
+            if (UserOverrides == null)
+            {
+                UserOverrides = new List<UserOverridePreference>();
+            }
+        }
     }
 
     public class MultiplayerModePreferences
+    {
+        public MultiplayerModeDefaultRoutes DefaultRoutes { get; set; } =
+            new MultiplayerModeDefaultRoutes();
+        [XmlArray("UserOverrides")]
+        [XmlArrayItem("User")]
+        public List<UserOverridePreference> UserOverrides { get; set; } =
+            new List<UserOverridePreference>();
+
+        internal void EnsureInitialized()
+        {
+            if (DefaultRoutes == null)
+            {
+                DefaultRoutes = new MultiplayerModeDefaultRoutes();
+            }
+            if (UserOverrides == null)
+            {
+                UserOverrides = new List<UserOverridePreference>();
+            }
+        }
+    }
+
+    public class FourPlayerModePreferences
+    {
+        public FourPlayerModeDefaultRoutes DefaultRoutes { get; set; } =
+            new FourPlayerModeDefaultRoutes();
+        [XmlArray("UserOverrides")]
+        [XmlArrayItem("User")]
+        public List<UserOverridePreference> UserOverrides { get; set; } =
+            new List<UserOverridePreference>();
+
+        internal void EnsureInitialized()
+        {
+            if (DefaultRoutes == null)
+            {
+                DefaultRoutes = new FourPlayerModeDefaultRoutes();
+            }
+            if (UserOverrides == null)
+            {
+                UserOverrides = new List<UserOverridePreference>();
+            }
+        }
+    }
+
+    public class SingleModeDefaultRoutes
+    {
+        public string Player1Users { get; set; } = "*";
+    }
+
+    public class MultiplayerModeDefaultRoutes
     {
         public string Player1Users { get; set; } = "[a-m]*";
         public string Player2Users { get; set; } = "[n-z]*";
     }
 
-    public class FourPlayerModePreferences
+    public class FourPlayerModeDefaultRoutes
     {
         public string Player1Users { get; set; } = "[a-f]*";
         public string Player2Users { get; set; } = "[g-m]*";

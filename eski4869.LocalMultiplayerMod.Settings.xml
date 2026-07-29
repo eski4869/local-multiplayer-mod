@@ -3,16 +3,25 @@
   <PlayerCount>1</PlayerCount>
   <TwoPlayerLayout>FullHeight</TwoPlayerLayout>
   <SingleMode>
-    <Player1Users>*</Player1Users>
+    <DefaultRoutes>
+      <Player1Users>*</Player1Users>
+    </DefaultRoutes>
+    <UserOverrides />
   </SingleMode>
   <MultiplayerMode>
-    <Player1Users>[a-m]*</Player1Users>
-    <Player2Users>[n-z]*</Player2Users>
+    <DefaultRoutes>
+      <Player1Users>[a-m]*</Player1Users>
+      <Player2Users>[n-z]*</Player2Users>
+    </DefaultRoutes>
+    <UserOverrides />
   </MultiplayerMode>
   <FourPlayerMode>
-    <Player1Users>[a-f]*</Player1Users>
-    <Player2Users>[g-m]*</Player2Users>
-    <Player3Users>[n-s]*</Player3Users>
-    <Player4Users>[t-z]*</Player4Users>
+    <DefaultRoutes>
+      <Player1Users>[a-f]*</Player1Users>
+      <Player2Users>[g-m]*</Player2Users>
+      <Player3Users>[n-s]*</Player3Users>
+      <Player4Users>[t-z]*</Player4Users>
+    </DefaultRoutes>
+    <UserOverrides />
   </FourPlayerMode>
 </LocalMultiplayerPreferences>
