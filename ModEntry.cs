@@ -8,6 +8,7 @@ using HarmonyLib;
 using JumpKing;
 using JumpKing.API;
 using JumpKing.GameManager.MultiEnding;
+using JumpKing.Level;
 using JumpKing.MiscEntities.WorldItems.Inventory;
 using JumpKing.Mods;
 using JumpKing.PauseMenu.BT.Actions;
@@ -398,6 +399,34 @@ namespace LocalMultiplayerMod
                 AccessTools.Method(typeof(JumpGame), "Draw"),
                 typeof(MultiplayerDrawPatch),
                 "JumpGame.Draw"
+            );
+
+            // The world half of JumpGame.Draw, suppressed during the split
+            // renderer's single screen-space pass so the UI is not repeated in
+            // every view.
+            complete &= TryPatch(
+                harmony,
+                AccessTools.Method(typeof(JumpGame), "DrawBG"),
+                typeof(WorldDrawSuppressionPatch),
+                "JumpGame.DrawBG"
+            );
+            complete &= TryPatch(
+                harmony,
+                AccessTools.Method(typeof(LevelScreen), "Draw"),
+                typeof(WorldDrawSuppressionPatch),
+                "LevelScreen.Draw"
+            );
+            complete &= TryPatch(
+                harmony,
+                AccessTools.Method(typeof(LevelScreen), "DrawForeground"),
+                typeof(WorldDrawSuppressionPatch),
+                "LevelScreen.DrawForeground"
+            );
+            complete &= TryPatch(
+                harmony,
+                AccessTools.Method(typeof(EntityManager), "Draw"),
+                typeof(WorldDrawSuppressionPatch),
+                "EntityManager.Draw"
             );
             Type endingManagerType = AccessTools.TypeByName(
                 "JumpKing.GameManager.MultiEnding.EndingManager"
