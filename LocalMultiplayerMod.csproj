@@ -57,8 +57,15 @@
 	<ItemGroup>
 		<Compile Include="BrokerCommandClient.cs" />
 		<Compile Include="ModEntry.cs" />
+		<Compile Include="GlobalShims.cs" />
+		<Compile Include="ItemToggles.cs" />
+		<Compile Include="LevelStartReplay.cs" />
 		<Compile Include="LocalMultiplayerApi.cs" />
 		<Compile Include="MultiplayerRuntime.cs" />
+		<Compile Include="PlayerContext.cs" />
+		<Compile Include="PlayerScope.cs" />
+		<Compile Include="PlayerSpriteFactory.cs" />
+		<Compile Include="ReplayIsolation.cs" />
 		<Compile Include="UserCommandRouting.cs" />
 		<Compile Include="Properties\AssemblyInfo.cs" />
 	</ItemGroup>

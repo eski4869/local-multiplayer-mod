@@ -5,28 +5,29 @@ using System.Reflection;
 using EntityComponent;
 using HarmonyLib;
 using JumpKing;
-using JumpKing.API;
 using JumpKing.GameManager.MultiEnding;
-using JumpKing.Level;
+using JumpKing.MiscEntities.WorldItems;
 using JumpKing.Player;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 
 namespace LocalMultiplayerMod
 {
+    /// <summary>
+    /// Owns the player contexts and the per-player lifecycle.
+    ///
+    /// Player 1 is not privileged here: it gets a context like everybody else, so
+    /// the scope contract consumer mods see is the same regardless of which player
+    /// is being processed.
+    /// </summary>
     internal static class MultiplayerRuntime
     {
         private const int MaximumPlayers = 4;
-        private static PlayerEntity _player1;
-        private static readonly PlayerEntity[] AdditionalPlayers =
-            new PlayerEntity[MaximumPlayers - 1];
+
+        private static readonly PlayerContext[] Contexts =
+            new PlayerContext[MaximumPlayers];
         private static bool _levelStarted;
         private static bool _raceComplete;
-        private static bool _blockBehavioursSynchronized;
-        private static readonly FieldInfo BlockBehaviourLookupField = AccessTools.Field(
-            typeof(BodyComp),
-            "m_blockBehaviourLookup"
-        );
 
         public static bool IsActive
         {
@@ -37,10 +38,10 @@ namespace LocalMultiplayerMod
                     return false;
                 }
 
-                for (int playerNumber = 2; playerNumber <= ModEntry.PlayerCount; playerNumber++)
+                for (int number = 1; number <= ModEntry.PlayerCount; number++)
                 {
-                    PlayerEntity player = GetPlayer(playerNumber);
-                    if (player == null || !player.IsAlive)
+                    PlayerContext context = GetContext(number);
+                    if (context == null || !context.IsAlive)
                     {
                         return false;
                     }
@@ -55,31 +56,81 @@ namespace LocalMultiplayerMod
             get { return IsActive ? ModEntry.PlayerCount : 1; }
         }
 
-        public static PlayerEntity GetPlayer(int playerNumber)
+        public static PlayerContext GetContext(int playerNumber)
         {
-            if (playerNumber == 1)
+            if (playerNumber < 1 || playerNumber > MaximumPlayers)
             {
-                if (_player1 != null && _player1.IsAlive)
-                {
-                    return _player1;
-                }
-
-                _player1 = EntityManager.instance == null ? null :
-                    EntityManager.instance.Find<PlayerEntity>();
-                return _player1;
+                return null;
             }
 
-            int index = playerNumber - 2;
-            return index >= 0 && index < AdditionalPlayers.Length ?
-                AdditionalPlayers[index] : null;
+            PlayerContext context = Contexts[playerNumber - 1];
+            if (playerNumber == 1 && (context == null || !context.IsAlive))
+            {
+                context = CreatePrimaryContext();
+            }
+
+            return context;
         }
 
-        public static void OnLevelStart()
+        public static PlayerEntity GetPlayer(int playerNumber)
         {
-            _player1 = EntityManager.instance == null ? null :
-                EntityManager.instance.Find<PlayerEntity>();
+            PlayerContext context = GetContext(playerNumber);
+            return context == null ? null : context.Player;
+        }
+
+        public static PlayerContext GetContext(PlayerEntity player)
+        {
+            if (player == null)
+            {
+                return null;
+            }
+
+            for (int i = 0; i < Contexts.Length; i++)
+            {
+                if (Contexts[i] != null &&
+                    ReferenceEquals(Contexts[i].Player, player))
+                {
+                    return Contexts[i];
+                }
+            }
+
+            return null;
+        }
+
+        public static int GetPlayerNumber(PlayerEntity player)
+        {
+            PlayerContext context = GetContext(player);
+            if (context != null)
+            {
+                return context.Number;
+            }
+
+            // The primary context may not be built yet during early frames.
+            return ReferenceEquals(player, GetPlayer(1)) ? 1 : 0;
+        }
+
+        public static int GetPlayerNumber(InputComponent input)
+        {
+            return input == null || input.gameObject == null ? 0 :
+                GetPlayerNumber(input.gameObject as PlayerEntity);
+        }
+
+        public static bool IsManagedPlayer(Entity entity)
+        {
+            var player = entity as PlayerEntity;
+            return player != null && GetContext(player) != null;
+        }
+
+        /// <summary>
+        /// Called just before the base ModLoader dispatches <c>[OnLevelStart]</c>.
+        /// Every player must exist by then, because block mods look up "the player"
+        /// inside that hook and register their behaviours on its body.
+        /// </summary>
+        public static void BeforeModLevelStart()
+        {
             _levelStarted = true;
             _raceComplete = false;
+            Contexts[0] = CreatePrimaryContext();
 
             if (ModEntry.IsMultiplayerEnabled)
             {
@@ -87,11 +138,30 @@ namespace LocalMultiplayerMod
             }
         }
 
+        /// <summary>
+        /// Called right after the base dispatch, to give every additional player
+        /// the same hook the first player just received.
+        /// </summary>
+        public static void AfterModLevelStart()
+        {
+            ReplayForAdditionalPlayers();
+        }
+
+        public static void OnLevelStart()
+        {
+            // Safety net: if the ModLoader patch did not apply, still build the
+            // contexts so the rest of the mod degrades to something coherent.
+            if (Contexts[0] == null || !Contexts[0].IsAlive)
+            {
+                BeforeModLevelStart();
+            }
+        }
+
         public static void OnLevelEnd()
         {
             _levelStarted = false;
             StopAdditionalPlayers();
-            _player1 = null;
+            Contexts[0] = null;
         }
 
         public static void SetPlayerCount(int playerCount)
@@ -103,34 +173,15 @@ namespace LocalMultiplayerMod
             }
 
             _raceComplete = false;
-            if (_levelStarted)
+            if (!_levelStarted)
             {
-                StartAdditionalPlayers(playerCount);
-            }
-        }
-
-        public static int GetPlayerNumber(PlayerEntity player)
-        {
-            if (player == null)
-            {
-                return 0;
+                return;
             }
 
-            for (int i = 0; i < AdditionalPlayers.Length; i++)
-            {
-                if (ReferenceEquals(player, AdditionalPlayers[i]))
-                {
-                    return i + 2;
-                }
-            }
-
-            return ReferenceEquals(player, GetPlayer(1)) ? 1 : 0;
-        }
-
-        public static int GetPlayerNumber(InputComponent input)
-        {
-            return input == null || input.gameObject == null ? 0 :
-                GetPlayerNumber(input.gameObject as PlayerEntity);
+            StartAdditionalPlayers(playerCount);
+            // Mid-run change: the mod hooks already ran for the players that
+            // existed then, so the new ones need their own pass.
+            ReplayForAdditionalPlayers();
         }
 
         public static void FinishRace()
@@ -139,127 +190,148 @@ namespace LocalMultiplayerMod
             StopAdditionalPlayers();
         }
 
-        public static void SynchronizeBlockBehaviours()
+        /// <summary>
+        /// Snapshot of the live contexts, player 1 first, used by the level-start
+        /// replay and the split renderer.
+        /// </summary>
+        public static List<PlayerContext> GetActiveContexts()
         {
-            if (_blockBehavioursSynchronized || !IsActive ||
-                BlockBehaviourLookupField == null || EntityManager.instance == null)
+            var result = new List<PlayerContext>(MaximumPlayers);
+            for (int number = 1; number <= ModEntry.PlayerCount; number++)
             {
-                return;
-            }
-
-            PlayerEntity player1 = GetPlayer(1);
-            BodyComp player1Body = player1 == null ? null : player1.GetComponent<BodyComp>();
-            if (player1Body == null)
-            {
-                return;
-            }
-
-            IDictionary sourceLookup = BlockBehaviourLookupField.GetValue(player1Body) as IDictionary;
-            if (sourceLookup == null)
-            {
-                return;
-            }
-
-            for (int playerNumber = 2; playerNumber <= ModEntry.PlayerCount; playerNumber++)
-            {
-                PlayerEntity player = GetPlayer(playerNumber);
-                BodyComp body = player == null ? null : player.GetComponent<BodyComp>();
-                IDictionary targetLookup = body == null ? null :
-                    BlockBehaviourLookupField.GetValue(body) as IDictionary;
-                if (targetLookup == null)
+                PlayerContext context = GetContext(number);
+                if (context != null && context.IsAlive)
                 {
-                    return;
-                }
-
-                foreach (DictionaryEntry entry in sourceLookup)
-                {
-                    Type blockType = entry.Key as Type;
-                    IBlockBehaviour sourceBehaviour = entry.Value as IBlockBehaviour;
-                    if (blockType == null || sourceBehaviour == null ||
-                        targetLookup.Contains(blockType))
-                    {
-                        continue;
-                    }
-
-                    IBlockBehaviour behaviour = CreateBlockBehaviour(
-                        sourceBehaviour,
-                        player,
-                        body
-                    );
-                    if (behaviour == null)
-                    {
-                        JumpKing.Program.crashLog.AddErrorMessage(
-                            "Local Multiplayer cannot construct block behaviour: " +
-                            sourceBehaviour.GetType().FullName
-                        );
-                        continue;
-                    }
-
-                    body.RegisterBlockBehaviour(blockType, behaviour);
+                    result.Add(context);
                 }
             }
 
-            _blockBehavioursSynchronized = true;
+            return result;
+        }
+
+        private static void ReplayForAdditionalPlayers()
+        {
+            if (!ModEntry.IsMultiplayerEnabled)
+            {
+                return;
+            }
+
+            List<PlayerContext> contexts = GetActiveContexts();
+            var pending = new List<PlayerContext>(contexts.Count);
+            for (int i = 0; i < contexts.Count; i++)
+            {
+                PlayerContext context = contexts[i];
+                if (context.IsPrimary || context.LevelStartReplayed)
+                {
+                    continue;
+                }
+
+                context.LevelStartReplayed = true;
+                pending.Add(context);
+            }
+
+            LevelStartReplay.Run(pending);
+        }
+
+        private static PlayerContext CreatePrimaryContext()
+        {
+            PlayerContext existing = Contexts[0];
+            if (existing != null && existing.IsAlive)
+            {
+                return existing;
+            }
+
+            if (EntityManager.instance == null)
+            {
+                return null;
+            }
+
+            // Find must see the real entity order here: while a level-start replay
+            // is in flight the lookup is redirected to the scoped player, and
+            // adopting that as player 1 would corrupt the whole context table.
+            bool redirect = PlayerScope.RedirectPrimaryPlayer;
+            PlayerScope.RedirectPrimaryPlayer = false;
+            PlayerEntity player;
+            try
+            {
+                player = EntityManager.instance.Find<PlayerEntity>();
+            }
+            finally
+            {
+                PlayerScope.RedirectPrimaryPlayer = redirect;
+            }
+
+            if (player == null)
+            {
+                return null;
+            }
+
+            var context = new PlayerContext(1, player);
+            Contexts[0] = context;
+            ItemToggles.Seed(context);
+            return context;
         }
 
         private static void StartAdditionalPlayers(int playerCount)
         {
-            if (EntityManager.instance == null)
-            {
-                return;
-            }
-
-            PlayerEntity player1 = GetPlayer(1);
-            if (player1 == null)
-            {
-                return;
-            }
-
-            BodyComp player1Body = player1.GetComponent<BodyComp>();
-            if (player1Body == null)
+            PlayerContext primary = GetContext(1);
+            if (EntityManager.instance == null || primary == null ||
+                primary.Body == null)
             {
                 return;
             }
 
             TrimAdditionalPlayers(playerCount);
+            ItemToggles.SeedIfUnset(primary);
 
-            for (int playerNumber = 2; playerNumber <= playerCount; playerNumber++)
+            using (PlayerScope.PreserveGlobalCamera())
             {
-                int index = playerNumber - 2;
-                if (AdditionalPlayers[index] != null && AdditionalPlayers[index].IsAlive)
+                CreateAdditionalPlayers(playerCount, primary);
+            }
+        }
+
+        private static void CreateAdditionalPlayers(
+            int playerCount,
+            PlayerContext primary
+        )
+        {
+            for (int number = 2; number <= playerCount; number++)
+            {
+                int index = number - 1;
+                if (Contexts[index] != null && Contexts[index].IsAlive)
                 {
                     continue;
                 }
 
                 try
                 {
-                    PlayerEntity player = new PlayerEntity();
-                    AdditionalPlayers[index] = player;
-                    PlayerSpriteFactory.Prepare(playerNumber);
-                    _blockBehavioursSynchronized = false;
+                    var player = new PlayerEntity();
+                    var context = new PlayerContext(number, player);
+                    Contexts[index] = context;
+                    ItemToggles.Seed(context);
+                    PlayerSpriteFactory.Prepare(number);
 
-                    BodyComp body = player.GetComponent<BodyComp>();
-                    if (body != null)
+                    if (context.Body != null)
                     {
-                        body.Position = player1Body.Position;
-                        body.Velocity = Vector2.Zero;
+                        context.Body.Position = primary.Body.Position;
+                        context.Body.Velocity = Vector2.Zero;
                     }
 
-                    Component[] components = player.GetComponents();
-                    for (int i = 0; i < components.Length; i++)
-                    {
-                        if (components[i].GetType().FullName == "JumpKing.Player.CameraFollowComp")
-                        {
-                            components[i].Enabled = false;
-                            break;
-                        }
-                    }
+                    // The camera now lives in the context and is driven by this
+                    // player's own CameraFollowComp inside its scope, so the
+                    // component stays enabled - unlike the previous design, which
+                    // disabled it and recomputed the screen in two separate places.
+                    context.Screen = primary.Screen;
+                    context.Offset = primary.Offset;
+                    context.CameraSeeded = primary.CameraSeeded;
+                    context.SaveState = SaveLubeAccess.GetPlayerPosition();
                 }
                 catch (Exception ex)
                 {
-                    AdditionalPlayers[index] = null;
+                    Contexts[index] = null;
                     JumpKing.Program.crashLog.AddErrorMessage(
-                        "Local Multiplayer player " + playerNumber + " start failed: " + ex.Message
+                        "Local Multiplayer player " + number + " start failed: " +
+                        ex.Message
                     );
                 }
             }
@@ -269,262 +341,70 @@ namespace LocalMultiplayerMod
         {
             MultiplayerSplitRenderer.Release();
 
-            for (int i = 0; i < AdditionalPlayers.Length; i++)
+            for (int i = 1; i < Contexts.Length; i++)
             {
-                if (AdditionalPlayers[i] != null && AdditionalPlayers[i].IsAlive)
-                {
-                    AdditionalPlayers[i].Destroy();
-                }
-
-                AdditionalPlayers[i] = null;
+                DestroyContext(i);
             }
 
-            _blockBehavioursSynchronized = false;
+            // Back to one player: give the items to the base game global again.
+            ItemToggles.ClearOverrides(Contexts[0]);
             PlayerSpriteFactory.Release();
         }
 
         private static void TrimAdditionalPlayers(int playerCount)
         {
-            for (int playerNumber = Math.Max(2, playerCount + 1);
-                playerNumber <= MaximumPlayers;
-                playerNumber++)
+            for (int number = Math.Max(2, playerCount + 1);
+                number <= MaximumPlayers;
+                number++)
             {
-                int index = playerNumber - 2;
-                if (AdditionalPlayers[index] != null && AdditionalPlayers[index].IsAlive)
-                {
-                    AdditionalPlayers[index].Destroy();
-                }
-
-                AdditionalPlayers[index] = null;
+                DestroyContext(number - 1);
             }
 
-            _blockBehavioursSynchronized = false;
             MultiplayerSplitRenderer.Release();
         }
 
-        private static IBlockBehaviour CreateBlockBehaviour(
-            IBlockBehaviour sourceBehaviour,
-            PlayerEntity player,
-            BodyComp body
-        )
+        private static void DestroyContext(int index)
         {
-            Type behaviourType = sourceBehaviour.GetType();
-            ConstructorInfo[] constructors = behaviourType.GetConstructors(
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
-            );
-
-            for (int i = 0; i < constructors.Length; i++)
+            PlayerContext context = Contexts[index];
+            if (context != null && context.IsAlive)
             {
-                ParameterInfo[] parameters = constructors[i].GetParameters();
-                object[] arguments = new object[parameters.Length];
-                bool supported = true;
-
-                for (int j = 0; j < parameters.Length; j++)
-                {
-                    object argument = ResolveBehaviourArgument(
-                        parameters[j],
-                        sourceBehaviour,
-                        player,
-                        body
-                    );
-                    if (argument == UnsupportedArgument.Value)
-                    {
-                        supported = false;
-                        break;
-                    }
-
-                    arguments[j] = argument;
-                }
-
-                if (!supported)
-                {
-                    continue;
-                }
-
-                try
-                {
-                    return constructors[i].Invoke(arguments) as IBlockBehaviour;
-                }
-                catch
-                {
-                }
+                context.Player.Destroy();
             }
 
-            return null;
-        }
-
-        private static object ResolveBehaviourArgument(
-            ParameterInfo parameter,
-            IBlockBehaviour sourceBehaviour,
-            PlayerEntity player,
-            BodyComp body
-        )
-        {
-            Type parameterType = parameter.ParameterType;
-
-            if (parameterType.IsInstanceOfType(player))
-            {
-                return player;
-            }
-
-            if (parameterType.IsInstanceOfType(body))
-            {
-                return body;
-            }
-
-            InputComponent input = player.GetComponent<InputComponent>();
-            if (input != null && parameterType.IsInstanceOfType(input))
-            {
-                return input;
-            }
-
-            if (LevelManager.Instance != null &&
-                parameterType.IsInstanceOfType(LevelManager.Instance))
-            {
-                return LevelManager.Instance;
-            }
-
-            object configuredValue;
-            if (TryReadConfiguredValue(sourceBehaviour, parameter, out configuredValue))
-            {
-                return configuredValue;
-            }
-
-            return UnsupportedArgument.Value;
-        }
-
-        private static bool TryReadConfiguredValue(
-            object source,
-            ParameterInfo parameter,
-            out object value
-        )
-        {
-            value = null;
-            Type sourceType = source.GetType();
-            Type parameterType = parameter.ParameterType;
-            string parameterName = NormalizeMemberName(parameter.Name);
-            PropertyInfo[] properties = sourceType.GetProperties(
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
-            );
-
-            for (int i = 0; i < properties.Length; i++)
-            {
-                PropertyInfo property = properties[i];
-                if (!property.CanRead || property.GetIndexParameters().Length != 0 ||
-                    !parameterType.IsAssignableFrom(property.PropertyType))
-                {
-                    continue;
-                }
-
-                if (NormalizeMemberName(property.Name) == parameterName)
-                {
-                    value = property.GetValue(source, null);
-                    return true;
-                }
-            }
-
-            PropertyInfo singleProperty = null;
-            for (int i = 0; i < properties.Length; i++)
-            {
-                PropertyInfo property = properties[i];
-                if (property.CanRead && property.GetIndexParameters().Length == 0 &&
-                    parameterType.IsAssignableFrom(property.PropertyType))
-                {
-                    if (singleProperty != null)
-                    {
-                        singleProperty = null;
-                        break;
-                    }
-
-                    singleProperty = property;
-                }
-            }
-
-            if (singleProperty != null)
-            {
-                value = singleProperty.GetValue(source, null);
-                return true;
-            }
-
-            FieldInfo[] fields = sourceType.GetFields(
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
-            );
-            for (int i = 0; i < fields.Length; i++)
-            {
-                FieldInfo field = fields[i];
-                if (parameterType.IsAssignableFrom(field.FieldType) &&
-                    NormalizeMemberName(field.Name) == parameterName)
-                {
-                    value = field.GetValue(source);
-                    return true;
-                }
-            }
-
-            FieldInfo singleField = null;
-            for (int i = 0; i < fields.Length; i++)
-            {
-                FieldInfo field = fields[i];
-                if (!parameterType.IsAssignableFrom(field.FieldType))
-                {
-                    continue;
-                }
-
-                if (singleField != null)
-                {
-                    return false;
-                }
-
-                singleField = field;
-            }
-
-            if (singleField == null)
-            {
-                return false;
-            }
-
-            value = singleField.GetValue(source);
-            return true;
-        }
-
-        private static string NormalizeMemberName(string name)
-        {
-            if (string.IsNullOrEmpty(name))
-            {
-                return string.Empty;
-            }
-
-            var characters = new List<char>(name.Length);
-            for (int i = 0; i < name.Length; i++)
-            {
-                if (char.IsLetterOrDigit(name[i]))
-                {
-                    characters.Add(char.ToLowerInvariant(name[i]));
-                }
-            }
-
-            const string backingFieldSuffix = "kbackingfield";
-            string normalized = new string(characters.ToArray());
-            if (normalized.EndsWith(backingFieldSuffix, StringComparison.Ordinal))
-            {
-                normalized = normalized.Substring(
-                    0,
-                    normalized.Length - backingFieldSuffix.Length
-                );
-            }
-
-            return normalized;
-        }
-
-        private sealed class UnsupportedArgument
-        {
-            public static readonly UnsupportedArgument Value = new UnsupportedArgument();
-
-            private UnsupportedArgument()
-            {
-            }
+            Contexts[index] = null;
         }
     }
 
+    /// <summary>
+    /// Wraps every player's component update in its own scope.
+    ///
+    /// This is the load-bearing patch: <c>Camera.CurrentScreen</c> is what
+    /// <c>LevelManager.CheckCollision</c>, <c>GetCollisionInfo</c> and
+    /// <c>IsInWater</c> resolve against, so without the right camera installed a
+    /// player collides against another player's screen.
+    /// </summary>
+    internal static class PlayerUpdateScopePatch
+    {
+        public static void Prefix(Entity __instance, out PlayerScope.Scope __state)
+        {
+            var player = __instance as PlayerEntity;
+            PlayerContext context = player == null ? null :
+                MultiplayerRuntime.GetContext(player);
+            __state = context == null ?
+                default(PlayerScope.Scope) : PlayerScope.Enter(context);
+        }
+
+        public static void Postfix(PlayerScope.Scope __state)
+        {
+            __state.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Additional players have no physical controller. The original is skipped so
+    /// the local pad does not drive all of them at once; postfixes from input mods
+    /// still run and fill in that player's remote input.
+    /// </summary>
     internal static class AdditionalPlayerInputStatePatch
     {
         public static bool Prefix(
@@ -543,53 +423,6 @@ namespace LocalMultiplayerMod
         }
     }
 
-    internal static class AdditionalPlayerSaveUpdatePatch
-    {
-        public static bool Prefix(PlayerEntity __instance)
-        {
-            return MultiplayerRuntime.GetPlayerNumber(__instance) <= 1;
-        }
-    }
-
-    internal static class AdditionalPlayerScreenUpdatePatch
-    {
-        private const int NotAdditionalPlayer = -1;
-        private static readonly FieldInfo CameraScreenField = AccessTools.Field(
-            typeof(Camera),
-            "_current_screen"
-        );
-
-        public static void Prefix(Entity __instance, out int __state)
-        {
-            PlayerEntity player = __instance as PlayerEntity;
-            if (MultiplayerRuntime.GetPlayerNumber(player) <= 1 || CameraScreenField == null)
-            {
-                __state = NotAdditionalPlayer;
-                return;
-            }
-
-            BodyComp body = player.GetComponent<BodyComp>();
-            if (body == null)
-            {
-                __state = NotAdditionalPlayer;
-                return;
-            }
-
-            __state = Camera.CurrentScreen;
-            int screen = -(int)Math.Floor(body.GetHitbox().Center.Y / 360f);
-            screen = Math.Max(0, Math.Min(LevelManager.TotalScreens - 1, screen));
-            CameraScreenField.SetValue(null, screen);
-        }
-
-        public static void Postfix(int __state)
-        {
-            if (__state != NotAdditionalPlayer)
-            {
-                CameraScreenField.SetValue(null, __state);
-            }
-        }
-    }
-
     internal static class AdditionalPlayerDrawPatch
     {
         public static void Prefix(PlayerEntity __instance, ref Sprite ___m_sprite)
@@ -602,324 +435,6 @@ namespace LocalMultiplayerMod
                     ref ___m_sprite,
                     playerNumber
                 );
-            }
-        }
-    }
-
-    internal static class PlayerSpriteFactory
-    {
-        private const int FirstColoredPlayer = 2;
-        private const int ColoredPlayerCount = 3;
-        private static readonly Type LayeredSpriteType = AccessTools.TypeByName(
-            "JumpKing.XnaWrappers.LayeredSprite"
-        );
-        private static readonly PropertyInfo LayeredSpritesProperty =
-            LayeredSpriteType == null ? null : AccessTools.Property(
-                LayeredSpriteType,
-                "Sprites"
-            );
-        private static readonly ConstructorInfo LayeredSpriteConstructor =
-            LayeredSpriteType == null ? null : AccessTools.Constructor(
-                LayeredSpriteType,
-                new Type[] { typeof(Sprite), typeof(Sprite[]) }
-            );
-        private static readonly Dictionary<Sprite, Sprite>[] Sprites =
-            CreateSpriteCaches();
-        private static readonly Dictionary<Sprite, LayeredSpriteCopy>[] LayeredSprites =
-            CreateLayeredSpriteCaches();
-        private static readonly Dictionary<Texture2D, Texture2D>[] Textures =
-            CreateTextureCaches();
-        private static readonly Dictionary<PlayerEntity, Sprite> AppliedDrawSprites =
-            new Dictionary<PlayerEntity, Sprite>();
-
-        public static void ApplyForDraw(
-            PlayerEntity player,
-            ref Sprite sprite,
-            int playerNumber
-        )
-        {
-            Sprite applied;
-            if (AppliedDrawSprites.TryGetValue(player, out applied) &&
-                ReferenceEquals(applied, sprite))
-            {
-                return;
-            }
-
-            sprite = Get(sprite, playerNumber);
-            AppliedDrawSprites[player] = sprite;
-        }
-
-        public static Sprite Get(Sprite source, int playerNumber)
-        {
-            if (source == null)
-            {
-                return null;
-            }
-
-            int paletteIndex = playerNumber - FirstColoredPlayer;
-            if (paletteIndex < 0 || paletteIndex >= ColoredPlayerCount)
-            {
-                return source;
-            }
-
-            if (LayeredSpriteType != null && LayeredSpriteType.IsInstanceOfType(source))
-            {
-                return GetLayeredSprite(source, playerNumber, paletteIndex);
-            }
-
-            Sprite sprite;
-            if (Sprites[paletteIndex].TryGetValue(source, out sprite))
-            {
-                return sprite;
-            }
-
-            sprite = Sprite.CreateSpriteWithCenter(
-                source.texture == null ? null :
-                    GetTexture(source.texture, playerNumber, paletteIndex),
-                source.source,
-                source.center
-            );
-            sprite.SetColor(source.GetColor());
-            Sprites[paletteIndex].Add(source, sprite);
-            return sprite;
-        }
-
-        public static void Prepare(int playerNumber)
-        {
-            if (Game1.instance == null || Game1.instance.contentManager == null)
-            {
-                return;
-            }
-
-            JKContentManager.PlayerSprites sprites =
-                Game1.instance.contentManager.playerSprites;
-            Get(sprites.idle, playerNumber);
-            Get(sprites.walk_one, playerNumber);
-            Get(sprites.walk_smear, playerNumber);
-            Get(sprites.walk_two, playerNumber);
-            Get(sprites.jump_charge, playerNumber);
-            Get(sprites.jump_up, playerNumber);
-            Get(sprites.jump_fall, playerNumber);
-            Get(sprites.jump_bounce, playerNumber);
-            Get(sprites.splat, playerNumber);
-            Get(sprites.look_up, playerNumber);
-            Get(sprites.stretch_one, playerNumber);
-            Get(sprites.stretch_smear, playerNumber);
-            Get(sprites.stretch_two, playerNumber);
-        }
-
-        public static void Release()
-        {
-            for (int i = 0; i < ColoredPlayerCount; i++)
-            {
-                foreach (Texture2D texture in Textures[i].Values)
-                {
-                    texture.Dispose();
-                }
-
-                Sprites[i].Clear();
-                LayeredSprites[i].Clear();
-                Textures[i].Clear();
-            }
-
-            AppliedDrawSprites.Clear();
-        }
-
-        private static Sprite GetLayeredSprite(
-            Sprite source,
-            int playerNumber,
-            int paletteIndex
-        )
-        {
-            if (LayeredSpritesProperty == null || LayeredSpriteConstructor == null)
-            {
-                throw new InvalidOperationException("LayeredSprite metadata is unavailable.");
-            }
-
-            IList sourceLayers = LayeredSpritesProperty.GetValue(source, null) as IList;
-            if (sourceLayers == null || sourceLayers.Count == 0)
-            {
-                throw new InvalidOperationException("LayeredSprite has no layers.");
-            }
-
-            LayeredSpriteCopy cached;
-            if (LayeredSprites[paletteIndex].TryGetValue(source, out cached) &&
-                cached.Matches(sourceLayers))
-            {
-                return cached.Sprite;
-            }
-
-            Sprite[] sourceSprites = new Sprite[sourceLayers.Count];
-            Sprite[] extraLayers = new Sprite[sourceLayers.Count - 1];
-            for (int i = 0; i < sourceLayers.Count; i++)
-            {
-                Sprite sourceSprite = (Sprite)sourceLayers[i];
-                sourceSprites[i] = sourceSprite;
-                if (i > 0)
-                {
-                    extraLayers[i - 1] = Get(sourceSprite, playerNumber);
-                }
-            }
-
-            Sprite sprite = (Sprite)LayeredSpriteConstructor.Invoke(
-                new object[] { Get(sourceSprites[0], playerNumber), extraLayers }
-            );
-            LayeredSprites[paletteIndex][source] = new LayeredSpriteCopy(sprite, sourceSprites);
-            return sprite;
-        }
-
-        private static Texture2D GetTexture(
-            Texture2D source,
-            int playerNumber,
-            int paletteIndex
-        )
-        {
-            Texture2D texture;
-            if (Textures[paletteIndex].TryGetValue(source, out texture))
-            {
-                return texture;
-            }
-
-            Color[] pixels = new Color[source.Width * source.Height];
-            source.GetData(pixels);
-
-            for (int i = 0; i < pixels.Length; i++)
-            {
-                Color pixel = pixels[i];
-                if (!IsBodyBlue(pixel))
-                {
-                    continue;
-                }
-
-                int maximum = Math.Max(pixel.R, Math.Max(pixel.G, pixel.B));
-                int minimum = Math.Min(pixel.R, Math.Min(pixel.G, pixel.B));
-                int chroma = maximum - minimum;
-                pixels[i] = RecolorBody(pixel, playerNumber, minimum, maximum, chroma);
-            }
-
-            texture = new Texture2D(
-                Game1.instance.GraphicsDevice,
-                source.Width,
-                source.Height
-            );
-            texture.SetData(pixels);
-            Textures[paletteIndex].Add(source, texture);
-            return texture;
-        }
-
-        private static Color RecolorBody(
-            Color source,
-            int playerNumber,
-            int minimum,
-            int maximum,
-            int chroma
-        )
-        {
-            switch (playerNumber)
-            {
-                case 2:
-                    return new Color(
-                        maximum,
-                        minimum + (chroma * 7 + 7) / 15,
-                        minimum,
-                        source.A
-                    );
-                case 3:
-                    return new Color(
-                        minimum,
-                        maximum,
-                        minimum + (chroma + 1) / 3,
-                        source.A
-                    );
-                case 4:
-                    int silver = minimum + (chroma * 82 + 50) / 100;
-                    return new Color(
-                        silver,
-                        silver,
-                        silver,
-                        source.A
-                    );
-                default:
-                    return source;
-            }
-        }
-
-        private static Dictionary<Sprite, Sprite>[] CreateSpriteCaches()
-        {
-            var caches = new Dictionary<Sprite, Sprite>[ColoredPlayerCount];
-            for (int i = 0; i < caches.Length; i++)
-            {
-                caches[i] = new Dictionary<Sprite, Sprite>();
-            }
-
-            return caches;
-        }
-
-        private static Dictionary<Sprite, LayeredSpriteCopy>[] CreateLayeredSpriteCaches()
-        {
-            var caches = new Dictionary<Sprite, LayeredSpriteCopy>[ColoredPlayerCount];
-            for (int i = 0; i < caches.Length; i++)
-            {
-                caches[i] = new Dictionary<Sprite, LayeredSpriteCopy>();
-            }
-
-            return caches;
-        }
-
-        private static Dictionary<Texture2D, Texture2D>[] CreateTextureCaches()
-        {
-            var caches = new Dictionary<Texture2D, Texture2D>[ColoredPlayerCount];
-            for (int i = 0; i < caches.Length; i++)
-            {
-                caches[i] = new Dictionary<Texture2D, Texture2D>();
-            }
-
-            return caches;
-        }
-
-        private static bool IsBodyBlue(Color pixel)
-        {
-            if (pixel.A == 0)
-            {
-                return false;
-            }
-
-            int threshold = Math.Max(4, pixel.A / 16);
-            int maximum = Math.Max(pixel.R, Math.Max(pixel.G, pixel.B));
-            int minimum = Math.Min(pixel.R, Math.Min(pixel.G, pixel.B));
-            return maximum - minimum >= threshold &&
-                pixel.B >= pixel.G - threshold &&
-                pixel.G >= pixel.R + threshold / 2 &&
-                pixel.B >= pixel.R + threshold;
-        }
-
-        private sealed class LayeredSpriteCopy
-        {
-            public readonly Sprite Sprite;
-            private readonly Sprite[] _sourceLayers;
-
-            public LayeredSpriteCopy(Sprite sprite, Sprite[] sourceLayers)
-            {
-                Sprite = sprite;
-                _sourceLayers = sourceLayers;
-            }
-
-            public bool Matches(IList sourceLayers)
-            {
-                if (sourceLayers.Count != _sourceLayers.Length)
-                {
-                    return false;
-                }
-
-                for (int i = 0; i < _sourceLayers.Length; i++)
-                {
-                    if (!ReferenceEquals(sourceLayers[i], _sourceLayers[i]))
-                    {
-                        return false;
-                    }
-                }
-
-                return true;
             }
         }
     }
@@ -948,46 +463,81 @@ namespace LocalMultiplayerMod
                 return;
             }
 
-            for (int playerNumber = 2;
-                playerNumber <= MultiplayerRuntime.PlayerCount;
-                playerNumber++)
+            PlayerContext primary = MultiplayerRuntime.GetContext(1);
+            if (primary == null || primary.Body == null)
             {
-                PlayerEntity player = MultiplayerRuntime.GetPlayer(playerNumber);
-                if (player == null)
+                return;
+            }
+
+            for (int number = 2;
+                number <= MultiplayerRuntime.PlayerCount;
+                number++)
+            {
+                PlayerContext winner = MultiplayerRuntime.GetContext(number);
+                if (winner == null || !winner.IsAlive || winner.Body == null)
                 {
                     continue;
                 }
 
-                for (int i = 0; i < ___m_endings.Count; i++)
+                // Every ending opens with "if (Camera.CurrentScreen !=
+                // ENDING_SCREEN0) return false", so the question has to be asked
+                // with that player's camera installed. Asked from outside a
+                // scope it is really being asked about player 1's screen, and an
+                // additional player standing on the ending screen never wins.
+                IEnding ending = null;
+                using (PlayerScope.Enter(winner, false, false))
                 {
-                    IEnding ending = ___m_endings[i];
-                    if (!ending.CheckWin(player))
+                    for (int i = 0; i < ___m_endings.Count; i++)
                     {
-                        continue;
+                        if (___m_endings[i].CheckWin(winner.Player))
+                        {
+                            ending = ___m_endings[i];
+                            break;
+                        }
                     }
-
-                    PlayerEntity player1 = MultiplayerRuntime.GetPlayer(1);
-                    BodyComp player1Body = player1 == null ? null :
-                        player1.GetComponent<BodyComp>();
-                    BodyComp winnerBody = player.GetComponent<BodyComp>();
-
-                    if (player1Body == null || winnerBody == null)
-                    {
-                        return;
-                    }
-
-                    player1Body.Position = winnerBody.Position;
-                    player1Body.Velocity = winnerBody.Velocity;
-
-                    if (ending.CheckWin(player1))
-                    {
-                        __0 = ending;
-                        __result = true;
-                        MultiplayerRuntime.FinishRace();
-                    }
-
-                    return;
                 }
+
+                if (ending == null)
+                {
+                    continue;
+                }
+
+                // The engine can only end the run for the player it knows about,
+                // so player 1 takes the winner's place. Its camera has to move
+                // too: moving the body alone leaves player 1 on its own screen,
+                // and the same first check rejects the handover.
+                Vector2 savedPosition = primary.Body.Position;
+                Vector2 savedVelocity = primary.Body.Velocity;
+                int savedScreen = primary.Screen;
+                Vector2 savedOffset = primary.Offset;
+
+                primary.Body.Position = winner.Body.Position;
+                primary.Body.Velocity = winner.Body.Velocity;
+                primary.Screen = winner.Screen;
+                primary.Offset = winner.Offset;
+
+                bool accepted;
+                using (PlayerScope.Enter(primary, false, false))
+                {
+                    accepted = ending.CheckWin(primary.Player);
+                }
+
+                if (accepted)
+                {
+                    __0 = ending;
+                    __result = true;
+                    MultiplayerRuntime.FinishRace();
+                    PlayerScope.SetGlobalCamera(winner.Screen, winner.Offset);
+                }
+                else
+                {
+                    primary.Body.Position = savedPosition;
+                    primary.Body.Velocity = savedVelocity;
+                    primary.Screen = savedScreen;
+                    primary.Offset = savedOffset;
+                }
+
+                return;
             }
         }
     }
@@ -1006,24 +556,12 @@ namespace LocalMultiplayerMod
         private const int Height = 360;
         private const int HalfWidth = Width / 2;
         private const int HalfHeight = Height / 2;
-        private static readonly FieldInfo CameraScreenField = AccessTools.Field(
-            typeof(Camera),
-            "_current_screen"
-        );
-        private static readonly MethodInfo BodyIsOnBlockMethod = AccessTools.Method(
-            typeof(BodyComp),
-            "IsOnBlock",
-            new Type[] { typeof(Type) }
-        );
 
-        private static readonly RenderTarget2D[] PlayerTargets = new RenderTarget2D[4];
+        private static readonly RenderTarget2D[] PlayerTargets =
+            new RenderTarget2D[4];
         private static readonly int[] ViewTargetIndexes = new int[4];
-        private static readonly int[] ViewScreens = new int[4];
-        private static readonly Vector2[] ViewOffsets = new Vector2[4];
+        private static readonly PlayerContext[] ViewContexts = new PlayerContext[4];
         private static bool _drawingPass;
-        private static readonly bool[] CameraInitialized = new bool[4];
-        private static readonly int[] CameraScreens = new int[4];
-        private static readonly Vector2[] CameraOffsets = new Vector2[4];
 
         public static bool PrefixDraw(JumpGame game)
         {
@@ -1034,64 +572,51 @@ namespace LocalMultiplayerMod
 
             Game1 host = Game1.instance;
             int playerCount = MultiplayerRuntime.PlayerCount;
-            if (host == null || CameraScreenField == null ||
+            if (host == null || !PlayerScope.IsAvailable ||
                 (playerCount != 2 && playerCount != 4))
             {
                 return true;
             }
 
-            for (int playerNumber = 1; playerNumber <= playerCount; playerNumber++)
+            for (int i = 0; i < playerCount; i++)
             {
-                if (MultiplayerRuntime.GetPlayer(playerNumber) == null)
+                PlayerContext context = MultiplayerRuntime.GetContext(i + 1);
+                if (context == null || !context.IsAlive)
                 {
                     return true;
                 }
+
+                ViewContexts[i] = context;
             }
 
             GraphicsDevice graphics = host.GraphicsDevice;
             EnsureTargets(graphics, playerCount);
 
             RenderTargetBinding[] previousTargets = graphics.GetRenderTargets();
-            int previousScreen = Camera.CurrentScreen;
-            Vector2 previousOffset = Camera.Offset;
 
             host.EndBatch();
 
             try
             {
-                for (int playerNumber = 1; playerNumber <= playerCount; playerNumber++)
+                for (int i = 0; i < playerCount; i++)
                 {
-                    PlayerEntity player = MultiplayerRuntime.GetPlayer(playerNumber);
-                    int screen = previousScreen;
-                    Vector2 offset = previousOffset;
-                    if (playerNumber > 1)
-                    {
-                        screen = GetPlayerScreen(player, playerNumber, out offset);
-                    }
-
-                    int viewIndex = playerNumber - 1;
-                    ViewScreens[viewIndex] = screen;
-                    ViewOffsets[viewIndex] = offset;
-                    ViewTargetIndexes[viewIndex] = FindMatchingView(viewIndex);
-
+                    ViewTargetIndexes[i] = FindMatchingView(i);
                 }
 
-                for (int playerNumber = 1; playerNumber <= playerCount; playerNumber++)
+                for (int i = 0; i < playerCount; i++)
                 {
-                    int viewIndex = playerNumber - 1;
-                    if (ViewTargetIndexes[viewIndex] != viewIndex)
+                    if (ViewTargetIndexes[i] != i)
                     {
                         continue;
                     }
 
-                    Camera.Offset = ViewOffsets[viewIndex];
                     DrawView(
                         game,
                         host,
                         graphics,
-                        PlayerTargets[viewIndex],
-                        ViewScreens[viewIndex],
-                        GetViewPlayerMask(viewIndex, playerCount)
+                        PlayerTargets[i],
+                        ViewContexts[i],
+                        GetViewPlayerMask(i, playerCount)
                     );
                 }
             }
@@ -1100,8 +625,6 @@ namespace LocalMultiplayerMod
                 _drawingPass = false;
                 LocalMultiplayerApi.SetCurrentViewPlayerMask(1);
                 RestoreTargets(graphics, previousTargets);
-                CameraScreenField.SetValue(null, previousScreen);
-                Camera.Offset = previousOffset;
                 host.StartBatch();
             }
 
@@ -1130,11 +653,7 @@ namespace LocalMultiplayerMod
             {
                 DisposeTarget(ref PlayerTargets[i]);
                 ViewTargetIndexes[i] = i;
-                ViewScreens[i] = 0;
-                ViewOffsets[i] = Vector2.Zero;
-                CameraInitialized[i] = false;
-                CameraScreens[i] = 0;
-                CameraOffsets[i] = Vector2.Zero;
+                ViewContexts[i] = null;
             }
         }
 
@@ -1142,11 +661,10 @@ namespace LocalMultiplayerMod
         {
             for (int i = 0; i < 2; i++)
             {
-                PlayerEntity player = MultiplayerRuntime.GetPlayer(i + 1);
                 Game1.spriteBatch.Draw(
                     PlayerTargets[ViewTargetIndexes[i]],
                     new Rectangle(i * HalfWidth, 0, HalfWidth, Height),
-                    GetPlayerViewport(player),
+                    GetPlayerViewport(ViewContexts[i]),
                     Color.White
                 );
             }
@@ -1174,9 +692,9 @@ namespace LocalMultiplayerMod
             }
         }
 
-        private static Rectangle GetPlayerViewport(PlayerEntity player)
+        private static Rectangle GetPlayerViewport(PlayerContext context)
         {
-            BodyComp body = player == null ? null : player.GetComponent<BodyComp>();
+            BodyComp body = context == null ? null : context.Body;
             int centerX = body == null ? Width / 2 : body.GetHitbox().Center.X;
             int sourceX = centerX < HalfWidth ? 0 : HalfWidth;
             return new Rectangle(sourceX, 0, HalfWidth, Height);
@@ -1207,8 +725,8 @@ namespace LocalMultiplayerMod
         {
             for (int i = 0; i < viewIndex; i++)
             {
-                if (ViewScreens[i] == ViewScreens[viewIndex] &&
-                    ViewOffsets[i] == ViewOffsets[viewIndex])
+                if (ViewContexts[i].Screen == ViewContexts[viewIndex].Screen &&
+                    ViewContexts[i].Offset == ViewContexts[viewIndex].Offset)
                 {
                     return ViewTargetIndexes[i];
                 }
@@ -1222,26 +740,31 @@ namespace LocalMultiplayerMod
             Game1 host,
             GraphicsDevice graphics,
             RenderTarget2D target,
-            int screen,
+            PlayerContext context,
             int playerMask
         )
         {
             graphics.SetRenderTarget(target);
             graphics.Clear(Color.Black);
-            CameraScreenField.SetValue(null, screen);
-            host.StartBatch();
-            _drawingPass = true;
-            LocalMultiplayerApi.SetCurrentViewPlayerMask(playerMask);
 
-            try
+            // Read-only: the draw pass must not feed the camera back into the
+            // context, otherwise a scrolling ending would move the player's view.
+            using (PlayerScope.Enter(context, false, false))
             {
-                game.Draw();
-            }
-            finally
-            {
-                _drawingPass = false;
-                LocalMultiplayerApi.SetCurrentViewPlayerMask(1);
-                host.EndBatch();
+                host.StartBatch();
+                _drawingPass = true;
+                LocalMultiplayerApi.SetCurrentViewPlayerMask(playerMask);
+
+                try
+                {
+                    game.Draw();
+                }
+                finally
+                {
+                    _drawingPass = false;
+                    LocalMultiplayerApi.SetCurrentViewPlayerMask(1);
+                    host.EndBatch();
+                }
             }
         }
 
@@ -1257,60 +780,6 @@ namespace LocalMultiplayerMod
             }
 
             return mask;
-        }
-
-        private static int GetPlayerScreen(
-            PlayerEntity player,
-            int playerNumber,
-            out Vector2 offset
-        )
-        {
-            BodyComp body = player.GetComponent<BodyComp>();
-            if (body == null)
-            {
-                offset = Camera.Offset;
-                return Camera.CurrentScreen;
-            }
-
-            int index = playerNumber - 1;
-            int hostScreen = Camera.CurrentScreen;
-            Vector2 hostOffset = Camera.Offset;
-            if (!CameraInitialized[index])
-            {
-                CameraScreens[index] = hostScreen;
-                CameraOffsets[index] = hostOffset;
-                CameraInitialized[index] = true;
-            }
-
-            CameraScreenField.SetValue(null, CameraScreens[index]);
-            Camera.Offset = CameraOffsets[index];
-
-            try
-            {
-                bool isOnSand = BodyIsOnBlockMethod != null &&
-                    (bool)BodyIsOnBlockMethod.Invoke(
-                        body,
-                        new object[] { typeof(SandBlock) }
-                    );
-
-                if (!isOnSand)
-                {
-                    Camera.UpdateCameraWithVelocity(
-                        body.GetHitbox().Center,
-                        body.Velocity
-                    );
-                }
-
-                CameraScreens[index] = Camera.CurrentScreen;
-                CameraOffsets[index] = Camera.Offset;
-                offset = CameraOffsets[index];
-                return CameraScreens[index];
-            }
-            finally
-            {
-                CameraScreenField.SetValue(null, hostScreen);
-                Camera.Offset = hostOffset;
-            }
         }
 
         private static void EnsureTargets(GraphicsDevice graphics, int playerCount)
