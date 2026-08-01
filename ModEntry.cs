@@ -6,7 +6,9 @@ using System.Xml.Serialization;
 using EntityComponent;
 using HarmonyLib;
 using JumpKing;
+using JumpKing.API;
 using JumpKing.GameManager.MultiEnding;
+using JumpKing.MiscEntities.WorldItems.Inventory;
 using JumpKing.Mods;
 using JumpKing.PauseMenu.BT.Actions;
 using JumpKing.Player;
@@ -68,6 +70,7 @@ namespace LocalMultiplayerMod
             get { return PlayerCount > 1; }
         }
 
+
         internal static TwoPlayerLayout TwoPlayerLayout
         {
             get
@@ -81,6 +84,60 @@ namespace LocalMultiplayerMod
         {
             EnsurePreferencesLoaded();
             return _userRouter.Resolve(PlayerCount, user);
+        }
+
+        /// <summary>
+        /// Decides whether a mod's <c>[OnLevelStart]</c> is replayed per player.
+        ///
+        /// The default answer is "only if it registered a block behaviour", which
+        /// a mod proves by doing it during the normal dispatch. The two lists are
+        /// escape hatches for the cases that judgement gets wrong.
+        /// </summary>
+        internal static bool ShouldReplayMod(
+            string modName,
+            bool registeredBlockBehaviour
+        )
+        {
+            EnsurePreferencesLoaded();
+            LevelStartReplayPreferences settings = _preferences.LevelStartReplay;
+
+            if (ContainsModName(settings.NeverReplay, modName))
+            {
+                return false;
+            }
+
+            if (ContainsModName(settings.AlsoReplay, modName))
+            {
+                return true;
+            }
+
+            return registeredBlockBehaviour;
+        }
+
+        private static bool ContainsModName(string list, string modName)
+        {
+            if (string.IsNullOrEmpty(list) || string.IsNullOrEmpty(modName))
+            {
+                return false;
+            }
+
+            string[] entries = list.Split(
+                new[] { ';', ',' },
+                StringSplitOptions.RemoveEmptyEntries
+            );
+            for (int i = 0; i < entries.Length; i++)
+            {
+                if (string.Equals(
+                    entries[i].Trim(),
+                    modName,
+                    StringComparison.OrdinalIgnoreCase
+                ))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         internal static void ProcessBrokerCommand()
@@ -204,96 +261,208 @@ namespace LocalMultiplayerMod
                 return;
             }
 
+            var harmony = new Harmony("eski4869.LocalMultiplayerMod");
+            bool complete = true;
+
+            // Broker polling.
+            complete &= TryPatch(
+                harmony,
+                AccessTools.Method(typeof(Game1), "Update"),
+                typeof(LocalMultiplayerGameUpdatePatch),
+                "Game1.Update"
+            );
+
+            // Additional players have no physical pad.
+            complete &= TryPatch(
+                harmony,
+                AccessTools.Method(typeof(InputComponent), "GetState"),
+                typeof(AdditionalPlayerInputStatePatch),
+                "InputComponent.GetState"
+            );
+            complete &= TryPatch(
+                harmony,
+                AccessTools.Method(typeof(InputComponent), "GetPressedState"),
+                typeof(AdditionalPlayerInputStatePatch),
+                "InputComponent.GetPressedState"
+            );
+
+            // The scope that makes every one-player global resolve to the player
+            // being updated. This is what the rest of the design hangs off.
+            complete &= TryPatch(
+                harmony,
+                AccessTools.Method(typeof(Entity), "UpdateComponents"),
+                typeof(PlayerUpdateScopePatch),
+                "Entity.UpdateComponents"
+            );
+
+            // Per-player item state.
+            complete &= TryPatch(
+                harmony,
+                GlobalItemState.IsWearingSkinMethod,
+                typeof(SkinManagerIsWearingSkinPatch),
+                "SkinManager.IsWearingSkin"
+            );
+            complete &= TryPatch(
+                harmony,
+                AccessTools.Method(
+                    typeof(InventoryManager),
+                    "HasItemEnabled"
+                ),
+                typeof(InventoryHasItemEnabledPatch),
+                "InventoryManager.HasItemEnabled"
+            );
+            Type skinManagerType = AccessTools.TypeByName(
+                "JumpKing.Player.Skins.SkinManager"
+            );
+            complete &= TryPatch(
+                harmony,
+                skinManagerType == null ? null :
+                    AccessTools.Method(skinManagerType, "EnableSkin"),
+                typeof(SkinManagerEnableSkinPatch),
+                "SkinManager.EnableSkin"
+            );
+            complete &= TryPatch(
+                harmony,
+                skinManagerType == null ? null :
+                    AccessTools.Method(skinManagerType, "DisableSkin"),
+                typeof(SkinManagerDisableSkinPatch),
+                "SkinManager.DisableSkin"
+            );
+
+            // Keep additional players out of the real save slot, so their
+            // PlayerEntity.Update can run normally instead of being skipped.
+            complete &= TryPatch(
+                harmony,
+                SaveLubeAccess.Getter,
+                typeof(SaveLubePlayerPositionGetPatch),
+                "SaveLube.PlayerPosition.get"
+            );
+            complete &= TryPatch(
+                harmony,
+                SaveLubeAccess.Setter,
+                typeof(SaveLubePlayerPositionSetPatch),
+                "SaveLube.PlayerPosition.set"
+            );
+
+            // Per-player level start: create the players before any mod hook runs,
+            // then give each additional player its own pass.
+            MethodInfo callOnLevelStart = AccessTools.Method(
+                typeof(ModLoader),
+                "CallOnLevelStartMethods"
+            );
+            complete &= TryPatch(
+                harmony,
+                callOnLevelStart,
+                typeof(ModLevelStartDispatchPatch),
+                "ModLoader.CallOnLevelStartMethods"
+            );
+            complete &= TryPatch(
+                harmony,
+                AccessTools.Property(typeof(EntityManager), "Entities")
+                    .GetGetMethod(),
+                typeof(EntityManagerEntitiesPatch),
+                "EntityManager.Entities"
+            );
+            complete &= TryPatch(
+                harmony,
+                AccessTools.Method(typeof(EntityManager), "AddObject"),
+                typeof(EntityManagerAddObjectPatch),
+                "EntityManager.AddObject"
+            );
+            complete &= TryPatch(
+                harmony,
+                AccessTools.Method(typeof(EntityManager), "MoveToFront"),
+                typeof(EntityManagerMoveToFrontPatch),
+                "EntityManager.MoveToFront"
+            );
+            complete &= TryPatch(
+                harmony,
+                AccessTools.Method(
+                    typeof(BodyComp),
+                    "RegisterBlockBehaviour",
+                    new Type[] { typeof(Type), typeof(IBlockBehaviour) }
+                ),
+                typeof(BodyCompRegisterBlockBehaviourPatch),
+                "BodyComp.RegisterBlockBehaviour"
+            );
+
+            // Rendering and win handover.
+            complete &= TryPatch(
+                harmony,
+                AccessTools.Method(typeof(PlayerEntity), "Draw"),
+                typeof(AdditionalPlayerDrawPatch),
+                "PlayerEntity.Draw"
+            );
+            complete &= TryPatch(
+                harmony,
+                AccessTools.Method(typeof(JumpGame), "Draw"),
+                typeof(MultiplayerDrawPatch),
+                "JumpGame.Draw"
+            );
+            Type endingManagerType = AccessTools.TypeByName(
+                "JumpKing.GameManager.MultiEnding.EndingManager"
+            );
+            complete &= TryPatch(
+                harmony,
+                endingManagerType == null ? null :
+                    AccessTools.Method(endingManagerType, "CheckWin"),
+                typeof(MultiplayerEndingPatch),
+                "EndingManager.CheckWin"
+            );
+
+            _harmony = harmony;
+            if (!complete)
+            {
+                JumpKing.Program.crashLog.AddErrorMessage(
+                    "Local Multiplayer installed with missing patches; " +
+                    "multiplayer behaviour will be degraded."
+                );
+            }
+        }
+
+        /// <summary>
+        /// Applies whichever of Prefix and Postfix the patch class declares.
+        /// Reports the specific target that failed instead of silently disabling
+        /// the whole mod, which is what the previous all-or-nothing check did.
+        /// </summary>
+        private static bool TryPatch(
+            Harmony harmony,
+            MethodBase target,
+            Type patchType,
+            string description
+        )
+        {
+            if (target == null)
+            {
+                JumpKing.Program.crashLog.AddErrorMessage(
+                    "Local Multiplayer patch target not found: " + description
+                );
+                return false;
+            }
+
             try
             {
-                MethodInfo gameUpdate = AccessTools.Method(typeof(Game1), "Update");
-                MethodInfo gameUpdatePrefix = AccessTools.Method(
-                    typeof(LocalMultiplayerGameUpdatePatch),
-                    "Prefix"
-                );
-                MethodInfo inputGetState = AccessTools.Method(typeof(InputComponent), "GetState");
-                MethodInfo inputGetPressedState = AccessTools.Method(
-                    typeof(InputComponent),
-                    "GetPressedState"
-                );
-                MethodInfo inputStatePrefix = AccessTools.Method(
-                    typeof(AdditionalPlayerInputStatePatch),
-                    "Prefix"
-                );
-                MethodInfo playerUpdate = AccessTools.Method(typeof(PlayerEntity), "Update");
-                MethodInfo playerUpdatePrefix = AccessTools.Method(
-                    typeof(AdditionalPlayerSaveUpdatePatch),
-                    "Prefix"
-                );
-                MethodInfo playerDraw = AccessTools.Method(
-                    typeof(PlayerEntity),
-                    "Draw"
-                );
-                MethodInfo playerDrawPrefix = AccessTools.Method(
-                    typeof(AdditionalPlayerDrawPatch),
-                    "Prefix"
-                );
-                MethodInfo entityUpdateComponents = AccessTools.Method(
-                    typeof(Entity),
-                    "UpdateComponents"
-                );
-                MethodInfo screenPrefix = AccessTools.Method(
-                    typeof(AdditionalPlayerScreenUpdatePatch),
-                    "Prefix"
-                );
-                MethodInfo screenPostfix = AccessTools.Method(
-                    typeof(AdditionalPlayerScreenUpdatePatch),
-                    "Postfix"
-                );
-                MethodInfo jumpGameDraw = AccessTools.Method(typeof(JumpGame), "Draw");
-                MethodInfo jumpGameDrawPrefix = AccessTools.Method(
-                    typeof(MultiplayerDrawPatch),
-                    "Prefix"
-                );
-                Type endingManagerType = AccessTools.TypeByName(
-                    "JumpKing.GameManager.MultiEnding.EndingManager"
-                );
-                MethodInfo checkWin = endingManagerType == null ? null :
-                    AccessTools.Method(endingManagerType, "CheckWin");
-                MethodInfo checkWinPostfix = AccessTools.Method(
-                    typeof(MultiplayerEndingPatch),
-                    "Postfix"
-                );
-
-                if (gameUpdate == null || gameUpdatePrefix == null ||
-                    inputGetState == null || inputGetPressedState == null ||
-                    inputStatePrefix == null || playerUpdate == null ||
-                    playerUpdatePrefix == null || playerDraw == null ||
-                    playerDrawPrefix == null || entityUpdateComponents == null ||
-                    screenPrefix == null || screenPostfix == null ||
-                    jumpGameDraw == null || jumpGameDrawPrefix == null ||
-                    checkWin == null || checkWinPostfix == null)
+                MethodInfo prefix = AccessTools.Method(patchType, "Prefix");
+                MethodInfo postfix = AccessTools.Method(patchType, "Postfix");
+                if (prefix == null && postfix == null)
                 {
-                    JumpKing.Program.crashLog.AddErrorMessage(
-                        "Local Multiplayer patch target not found."
-                    );
-                    return;
+                    return false;
                 }
 
-                _harmony = new Harmony("eski4869.LocalMultiplayerMod");
-                _harmony.Patch(gameUpdate, prefix: new HarmonyMethod(gameUpdatePrefix));
-                _harmony.Patch(inputGetState, prefix: new HarmonyMethod(inputStatePrefix));
-                _harmony.Patch(inputGetPressedState, prefix: new HarmonyMethod(inputStatePrefix));
-                _harmony.Patch(playerUpdate, prefix: new HarmonyMethod(playerUpdatePrefix));
-                _harmony.Patch(playerDraw, prefix: new HarmonyMethod(playerDrawPrefix));
-                _harmony.Patch(
-                    entityUpdateComponents,
-                    prefix: new HarmonyMethod(screenPrefix),
-                    postfix: new HarmonyMethod(screenPostfix)
+                harmony.Patch(
+                    target,
+                    prefix == null ? null : new HarmonyMethod(prefix),
+                    postfix == null ? null : new HarmonyMethod(postfix)
                 );
-                _harmony.Patch(jumpGameDraw, prefix: new HarmonyMethod(jumpGameDrawPrefix));
-                _harmony.Patch(checkWin, postfix: new HarmonyMethod(checkWinPostfix));
+                return true;
             }
             catch (Exception ex)
             {
                 JumpKing.Program.crashLog.AddErrorMessage(
-                    "Local Multiplayer patch failed: " + ex.Message
+                    "Local Multiplayer patch failed for " + description + ": " +
+                    ex.Message
                 );
+                return false;
             }
         }
 
@@ -435,6 +604,11 @@ namespace LocalMultiplayerMod
             {
                 preferences.FourPlayerMode.EnsureInitialized();
             }
+
+            if (preferences.LevelStartReplay == null)
+            {
+                preferences.LevelStartReplay = new LevelStartReplayPreferences();
+            }
         }
 
         private static void SavePreferences()
@@ -460,8 +634,32 @@ namespace LocalMultiplayerMod
     {
         public static void Prefix()
         {
+            PlayerScope.ResetIfLeaked();
             ModEntry.ProcessBrokerCommand();
-            MultiplayerRuntime.SynchronizeBlockBehaviours();
+        }
+    }
+
+    /// <summary>
+    /// Brackets the base <c>[OnLevelStart]</c> dispatch.
+    ///
+    /// The prefix creates every additional player first, because block mods look
+    /// up "the player" inside that hook and register their behaviours on its body
+    /// - if the player does not exist yet, it never gets them. The postfix then
+    /// runs the same dispatch once per additional player so each one is set up by
+    /// the mod itself rather than by cloning the first player's behaviours.
+    /// </summary>
+    internal static class ModLevelStartDispatchPatch
+    {
+        public static void Prefix()
+        {
+            LevelStartReplay.BeginBaseDispatch();
+            MultiplayerRuntime.BeforeModLevelStart();
+        }
+
+        public static void Postfix()
+        {
+            LevelStartReplay.EndBaseDispatch();
+            MultiplayerRuntime.AfterModLevelStart();
         }
     }
 
@@ -476,6 +674,23 @@ namespace LocalMultiplayerMod
             new MultiplayerModePreferences();
         public FourPlayerModePreferences FourPlayerMode { get; set; } =
             new FourPlayerModePreferences();
+        public LevelStartReplayPreferences LevelStartReplay { get; set; } =
+            new LevelStartReplayPreferences();
+    }
+
+    /// <summary>
+    /// Overrides for which mods get their <c>[OnLevelStart]</c> replayed per
+    /// player. Both are semicolon-separated mod names as they appear in
+    /// <c>ModLoadLog.txt</c>, and both are normally empty: a mod qualifies by
+    /// registering a block behaviour, which needs no configuration.
+    /// </summary>
+    public class LevelStartReplayPreferences
+    {
+        /// <summary>Replay these even though they registered no block behaviour.</summary>
+        public string AlsoReplay { get; set; } = string.Empty;
+
+        /// <summary>Never replay these, whatever they registered.</summary>
+        public string NeverReplay { get; set; } = string.Empty;
     }
 
     public class SingleModePreferences
