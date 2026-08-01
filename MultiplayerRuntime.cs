@@ -463,57 +463,80 @@ namespace LocalMultiplayerMod
                 return;
             }
 
+            PlayerContext primary = MultiplayerRuntime.GetContext(1);
+            if (primary == null || primary.Body == null)
+            {
+                return;
+            }
+
             for (int number = 2;
                 number <= MultiplayerRuntime.PlayerCount;
                 number++)
             {
-                PlayerEntity player = MultiplayerRuntime.GetPlayer(number);
-                if (player == null)
+                PlayerContext winner = MultiplayerRuntime.GetContext(number);
+                if (winner == null || !winner.IsAlive || winner.Body == null)
                 {
                     continue;
                 }
 
-                for (int i = 0; i < ___m_endings.Count; i++)
+                // Every ending opens with "if (Camera.CurrentScreen !=
+                // ENDING_SCREEN0) return false", so the question has to be asked
+                // with that player's camera installed. Asked from outside a
+                // scope it is really being asked about player 1's screen, and an
+                // additional player standing on the ending screen never wins.
+                IEnding ending = null;
+                using (PlayerScope.Enter(winner, false, false))
                 {
-                    IEnding ending = ___m_endings[i];
-                    if (!ending.CheckWin(player))
+                    for (int i = 0; i < ___m_endings.Count; i++)
                     {
-                        continue;
+                        if (___m_endings[i].CheckWin(winner.Player))
+                        {
+                            ending = ___m_endings[i];
+                            break;
+                        }
                     }
-
-                    PlayerEntity player1 = MultiplayerRuntime.GetPlayer(1);
-                    BodyComp player1Body = player1 == null ? null :
-                        player1.GetComponent<BodyComp>();
-                    BodyComp winnerBody = player.GetComponent<BodyComp>();
-
-                    if (player1Body == null || winnerBody == null)
-                    {
-                        return;
-                    }
-
-                    // The engine can only end the run for the player it knows
-                    // about, so player 1 is moved onto the winner's position to
-                    // hand the win over. If the ending does not accept it, put
-                    // player 1 back rather than leaving it teleported.
-                    Vector2 savedPosition = player1Body.Position;
-                    Vector2 savedVelocity = player1Body.Velocity;
-                    player1Body.Position = winnerBody.Position;
-                    player1Body.Velocity = winnerBody.Velocity;
-
-                    if (ending.CheckWin(player1))
-                    {
-                        __0 = ending;
-                        __result = true;
-                        MultiplayerRuntime.FinishRace();
-                    }
-                    else
-                    {
-                        player1Body.Position = savedPosition;
-                        player1Body.Velocity = savedVelocity;
-                    }
-
-                    return;
                 }
+
+                if (ending == null)
+                {
+                    continue;
+                }
+
+                // The engine can only end the run for the player it knows about,
+                // so player 1 takes the winner's place. Its camera has to move
+                // too: moving the body alone leaves player 1 on its own screen,
+                // and the same first check rejects the handover.
+                Vector2 savedPosition = primary.Body.Position;
+                Vector2 savedVelocity = primary.Body.Velocity;
+                int savedScreen = primary.Screen;
+                Vector2 savedOffset = primary.Offset;
+
+                primary.Body.Position = winner.Body.Position;
+                primary.Body.Velocity = winner.Body.Velocity;
+                primary.Screen = winner.Screen;
+                primary.Offset = winner.Offset;
+
+                bool accepted;
+                using (PlayerScope.Enter(primary, false, false))
+                {
+                    accepted = ending.CheckWin(primary.Player);
+                }
+
+                if (accepted)
+                {
+                    __0 = ending;
+                    __result = true;
+                    MultiplayerRuntime.FinishRace();
+                }
+                else
+                {
+                    primary.Body.Position = savedPosition;
+                    primary.Body.Velocity = savedVelocity;
+                    primary.Screen = savedScreen;
+                    primary.Offset = savedOffset;
+                }
+
+                return;
             }
         }
     }
