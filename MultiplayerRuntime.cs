@@ -389,11 +389,25 @@ namespace LocalMultiplayerMod
     {
         public static void Prefix(Entity __instance, out PlayerScope.Scope __state)
         {
+            __state = default(PlayerScope.Scope);
+
+            // Single player must be left exactly as the base game runs it. A
+            // scope would install the context's camera at the start of every
+            // player update, reverting anything that moved the camera since the
+            // last one - screen shake, weather, another mod - and there is
+            // nothing to gain from it when there is only one player to resolve.
+            if (!ModEntry.IsMultiplayerEnabled)
+            {
+                return;
+            }
+
             var player = __instance as PlayerEntity;
             PlayerContext context = player == null ? null :
                 MultiplayerRuntime.GetContext(player);
-            __state = context == null ?
-                default(PlayerScope.Scope) : PlayerScope.Enter(context);
+            if (context != null)
+            {
+                __state = PlayerScope.Enter(context);
+            }
         }
 
         public static void Postfix(PlayerScope.Scope __state)
