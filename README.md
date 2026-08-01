@@ -138,12 +138,15 @@ game behaves exactly as it does without this mod installed.
 
 ### Known limits
 
+- Some SwitchBlocks switch types do not respond for additional players. Warp,
+  one-way and the other gimmick blocks do. Under investigation.
 - A third-party mod that stores per-player state in a static still mixes players
   up. That can only be fixed in the mod itself, by moving the state onto
   `GetPlayerState` / `SetPlayerState`.
 - A mod that does process-wide work in `[OnLevelStart]` other than creating
   entities - loading sounds, registering block factories - repeats that work once
-  per player.
+  per player. Statics it assigns are rolled back after each replayed pass, so the
+  effect is repeated work rather than corrupted state.
 
 ## Requirements
 

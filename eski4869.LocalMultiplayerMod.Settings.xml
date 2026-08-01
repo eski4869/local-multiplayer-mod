@@ -24,4 +24,8 @@
     </DefaultRoutes>
     <UserOverrides />
   </FourPlayerMode>
+  <LevelStartReplay>
+    <AlsoReplay />
+    <NeverReplay />
+  </LevelStartReplay>
 </LocalMultiplayerPreferences>
