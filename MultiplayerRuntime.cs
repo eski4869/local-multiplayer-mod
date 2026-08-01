@@ -527,6 +527,7 @@ namespace LocalMultiplayerMod
                     __0 = ending;
                     __result = true;
                     MultiplayerRuntime.FinishRace();
+                    PlayerScope.SetGlobalCamera(winner.Screen, winner.Offset);
                 }
                 else
                 {

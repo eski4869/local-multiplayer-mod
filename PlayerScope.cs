@@ -83,6 +83,23 @@ namespace LocalMultiplayerMod
         /// file, so spawning an additional player would otherwise yank player 1's
         /// view to the save point.
         /// </summary>
+        /// <summary>
+        /// Moves the live camera directly. Only for the handover at the end of a
+        /// race: once the win is committed the race is over, player 1 owns the
+        /// global camera again, and the ending cutscene reads it in the same frame
+        /// - before player 1's next update scope would have committed it.
+        /// </summary>
+        public static void SetGlobalCamera(int screen, Vector2 offset)
+        {
+            if (CameraScreenField == null)
+            {
+                return;
+            }
+
+            CameraScreenField.SetValue(null, screen);
+            Camera.Offset = offset;
+        }
+
         public static CameraGuard PreserveGlobalCamera()
         {
             return CameraScreenField == null ?
