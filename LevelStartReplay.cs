@@ -73,9 +73,13 @@ namespace LocalMultiplayerMod
         /// </summary>
         public static void NoteBlockBehaviourRegistration()
         {
-            // Nothing replays in single player, so skip the stack walk entirely
-            // rather than recording an answer no one asks for.
-            if (!IsBaseDispatch || !ModEntry.IsMultiplayerEnabled)
+            // Always record, even in single player. This is a record of what
+            // happened during the level start, and whether it is needed is not
+            // known until later: switching to multiplayer from the pause menu
+            // replays mid-run, and by then this dispatch is long over. Skipping
+            // it while only one player existed left that replay with nothing to
+            // do, so additional players got none of the block behaviours.
+            if (!IsBaseDispatch)
             {
                 return;
             }
