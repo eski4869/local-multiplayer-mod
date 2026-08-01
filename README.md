@@ -75,6 +75,17 @@ Giant Boots and the Snake Ring reach every player - they cover every consumer in
 the base game at once, including `Walk`, `IsOnGround`, `FailState`,
 `IceBlockBehaviour` and `SnowBlockBehaviour`.
 
+**Split rendering.** `JumpGame.Draw` has a seam: it draws the world, then
+everything after that is screen-space UI at fixed coordinates. Only the world is
+drawn per view; the views are composited, and then the UI is drawn once at full
+size over them. Drawing the whole game per view is what used to put a pause menu
+and a run timer inside each half.
+
+`IForeground` stays in the per-view pass. The interface is a layer, not a
+coordinate space, and the overlays that use it are world-anchored. If your
+overlay is anchored to a player, check `IsPlayerInCurrentView` before drawing, or
+it will appear in views that are not showing that player.
+
 **Per-player level start.** Block mods find "the player" with
 `EntityManager.Find<PlayerEntity>()` inside `[OnLevelStart]` and register their
 behaviours on its `BodyComp`, so they only ever set up player 1. Every player is
