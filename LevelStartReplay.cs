@@ -73,7 +73,9 @@ namespace LocalMultiplayerMod
         /// </summary>
         public static void NoteBlockBehaviourRegistration()
         {
-            if (!IsBaseDispatch)
+            // Nothing replays in single player, so skip the stack walk entirely
+            // rather than recording an answer no one asks for.
+            if (!IsBaseDispatch || !ModEntry.IsMultiplayerEnabled)
             {
                 return;
             }
