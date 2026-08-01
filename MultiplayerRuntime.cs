@@ -6,8 +6,10 @@ using EntityComponent;
 using HarmonyLib;
 using JumpKing;
 using JumpKing.GameManager.MultiEnding;
+using JumpKing.Level;
 using JumpKing.MiscEntities.WorldItems;
 using JumpKing.Player;
+using JumpKing.Util.Tags;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 
@@ -563,6 +565,13 @@ namespace LocalMultiplayerMod
         private static readonly PlayerContext[] ViewContexts = new PlayerContext[4];
         private static bool _drawingPass;
 
+        /// <summary>
+        /// True during the single full-screen pass that draws the screen-space UI
+        /// over the composited views. The world half of <c>JumpGame.Draw</c> is
+        /// suppressed while it is set.
+        /// </summary>
+        public static bool IsScreenSpacePass { get; private set; }
+
         public static bool PrefixDraw(JumpGame game)
         {
             if (_drawingPass || !MultiplayerRuntime.IsActive)
@@ -611,7 +620,6 @@ namespace LocalMultiplayerMod
                     }
 
                     DrawView(
-                        game,
                         host,
                         graphics,
                         PlayerTargets[i],
@@ -644,7 +652,32 @@ namespace LocalMultiplayerMod
                 DrawFourPlayerViews();
             }
 
+            DrawScreenSpaceUi(game);
             return false;
+        }
+
+        /// <summary>
+        /// Draws the screen-space UI once over the composited views, at full size.
+        ///
+        /// The pause menu and the run timer both live in <c>GameLoop.Draw</c>, so
+        /// drawing the whole game per view put a copy of each inside every view.
+        /// This runs the same <c>JumpGame.Draw</c> with its world half suppressed,
+        /// which leaves the state UI and nothing else.
+        /// </summary>
+        private static void DrawScreenSpaceUi(JumpGame game)
+        {
+            IsScreenSpacePass = true;
+            _drawingPass = true;
+
+            try
+            {
+                game.Draw();
+            }
+            finally
+            {
+                _drawingPass = false;
+                IsScreenSpacePass = false;
+            }
         }
 
         public static void Release()
@@ -736,7 +769,6 @@ namespace LocalMultiplayerMod
         }
 
         private static void DrawView(
-            JumpGame game,
             Game1 host,
             GraphicsDevice graphics,
             RenderTarget2D target,
@@ -757,13 +789,46 @@ namespace LocalMultiplayerMod
 
                 try
                 {
-                    game.Draw();
+                    DrawWorld();
                 }
                 finally
                 {
                     _drawingPass = false;
                     LocalMultiplayerApi.SetCurrentViewPlayerMask(1);
                     host.EndBatch();
+                }
+            }
+        }
+
+        /// <summary>
+        /// The world half of <c>JumpGame.Draw</c>, which is everything that has to
+        /// be drawn once per view because it depends on that player's camera.
+        ///
+        /// IForeground stays here rather than moving to the screen-space pass:
+        /// the interface is a layer, not a coordinate space, and the overlays that
+        /// use it are world-anchored - one transforms the player's hitbox through
+        /// the camera, another already asks which view is being drawn. Moving them
+        /// would pin both to player 1's camera.
+        /// </summary>
+        private static void DrawWorld()
+        {
+            LevelScreen screen = LevelManager.CurrentScreen;
+            if (screen == null)
+            {
+                return;
+            }
+
+            screen.Draw();
+            EntityManager.instance.Draw();
+            screen.DrawForeground();
+
+            IReadOnlyList<Entity> entities = EntityManager.instance.Entities;
+            for (int i = 0; i < entities.Count; i++)
+            {
+                var foreground = entities[i] as IForeground;
+                if (foreground != null)
+                {
+                    foreground.ForegroundDraw();
                 }
             }
         }

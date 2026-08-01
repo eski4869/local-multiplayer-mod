@@ -202,8 +202,21 @@ namespace LocalMultiplayerMod
     /// </summary>
     internal static class EntityManagerEntitiesPatch
     {
+        private static readonly IReadOnlyList<Entity> Empty =
+            new List<Entity>().AsReadOnly();
+
         public static void Postfix(ref IReadOnlyList<Entity> __result)
         {
+            // The IForeground loop that closes JumpGame.Draw is inline, so it
+            // cannot be patched on its own. Emptying the list is what keeps it
+            // from running a second time in the screen-space pass, after the
+            // per-view passes already drew those overlays with the right camera.
+            if (MultiplayerSplitRenderer.IsScreenSpacePass)
+            {
+                __result = Empty;
+                return;
+            }
+
             if (!PlayerScope.RedirectPrimaryPlayer || __result == null)
             {
                 return;
@@ -265,6 +278,27 @@ namespace LocalMultiplayerMod
         public static void Prefix()
         {
             LevelStartReplay.NoteBlockBehaviourRegistration();
+        }
+    }
+
+    /// <summary>
+    /// Suppresses the world half of <c>JumpGame.Draw</c> during the split
+    /// renderer's screen-space pass.
+    ///
+    /// <c>JumpGame.Draw</c> has a clean seam: it draws the world (background,
+    /// screen, entities, screen foreground), then everything after that is
+    /// screen-space UI at fixed coordinates. The split renderer draws the world
+    /// once per view into its own target, composites them, and then needs the UI
+    /// exactly once at full size. Replaying the whole method per view is what put
+    /// a pause menu and a timer inside each half.
+    ///
+    /// Skipping these four leaves that second pass drawing UI only.
+    /// </summary>
+    internal static class WorldDrawSuppressionPatch
+    {
+        public static bool Prefix()
+        {
+            return !MultiplayerSplitRenderer.IsScreenSpacePass;
         }
     }
 
