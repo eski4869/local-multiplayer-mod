@@ -177,6 +177,7 @@ namespace LocalMultiplayerMod
 
             equipped = !context.Items.IsEquipped((Items)item);
             context.Items.SetEquipped((Items)item, equipped);
+            ItemToggles.PlayToggleSound();
             return true;
         }
 

@@ -1,3 +1,5 @@
+using System;
+using JumpKing;
 using JumpKing.MiscEntities.WorldItems;
 using JumpKing.MiscEntities.WorldItems.Inventory;
 
@@ -41,6 +43,30 @@ namespace LocalMultiplayerMod
         public static bool CanToggle(Items item)
         {
             return InventoryManager.GetItemCount(item) > 0;
+        }
+
+        /// <summary>
+        /// The confirmation blip the base game plays when an item is toggled.
+        ///
+        /// It lives in <c>GameLoop</c> next to the pad read, so only the physical
+        /// pad reaches it. A player toggling from chat goes through the API
+        /// instead and would flip the item silently.
+        /// </summary>
+        public static void PlayToggleSound()
+        {
+            if (Game1.instance == null || Game1.instance.contentManager == null)
+            {
+                return;
+            }
+
+            try
+            {
+                Game1.instance.contentManager.audio.menu.OnItemToggle();
+            }
+            catch (Exception)
+            {
+                // A missing sound file is not worth failing the toggle over.
+            }
         }
 
         /// <summary>

@@ -88,6 +88,41 @@ namespace LocalMultiplayerMod
         }
 
         /// <summary>
+        /// Changes whenever this player's sprite would need rebuilding: either
+        /// the globally applied skins changed, or this player's own item
+        /// overrides did. Cheap enough to ask every frame, which is what lets the
+        /// draw path notice an equip the moment it happens rather than at the
+        /// next change of pose.
+        /// </summary>
+        public static string EquipmentSignature(PlayerContext context)
+        {
+            if (context == null)
+            {
+                return null;
+            }
+
+            var applied = AppliedSkinsField == null ? null :
+                AppliedSkinsField.GetValue(null) as List<Skin>;
+
+            var text = new System.Text.StringBuilder();
+            if (applied != null)
+            {
+                for (int i = 0; i < applied.Count; i++)
+                {
+                    text.Append((int)applied[i].item).Append(',');
+                }
+            }
+
+            text.Append('|');
+            foreach (Items item in ItemToggles.PerPlayerItems)
+            {
+                text.Append(context.Items.IsEquipped(item) ? '1' : '0');
+            }
+
+            return text.ToString();
+        }
+
+        /// <summary>
         /// Returns a sprite showing this player's own equipment, or null when the
         /// source is not one of the layered player sprites, in which case the
         /// caller keeps what it already had.
