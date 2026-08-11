@@ -37,8 +37,8 @@ namespace LocalMultiplayerMod
             CreateLayeredSpriteCaches();
         private static readonly Dictionary<Texture2D, Texture2D>[] Textures =
             CreateTextureCaches();
-        private static readonly Dictionary<PlayerEntity, Sprite> AppliedDrawSprites =
-            new Dictionary<PlayerEntity, Sprite>();
+        private static readonly Dictionary<PlayerEntity, Applied> AppliedDrawSprites =
+            new Dictionary<PlayerEntity, Applied>();
 
         public static void ApplyForDraw(
             PlayerEntity player,
@@ -46,22 +46,48 @@ namespace LocalMultiplayerMod
             int playerNumber
         )
         {
-            Sprite applied;
+            PlayerContext context = MultiplayerRuntime.GetContext(player);
+            string signature = PlayerSkinComposer.EquipmentSignature(context);
+
+            Applied applied;
             if (AppliedDrawSprites.TryGetValue(player, out applied) &&
-                ReferenceEquals(applied, sprite))
+                ReferenceEquals(applied.Result, sprite))
             {
-                return;
+                if (applied.Signature == signature)
+                {
+                    return;
+                }
+
+                // The sprite on the player is the one this method last produced,
+                // so there is nothing left to read the pose from. Start again
+                // from the sprite the game had set, which is what makes an equip
+                // show up immediately instead of at the next change of pose.
+                sprite = applied.Source;
             }
 
             // Rebuild the layers from this player's own equipment before
             // recolouring, so the recolour caches see the individual base and
             // layer sprites, which are stable, rather than a freshly composed
             // one every frame.
-            PlayerContext context = MultiplayerRuntime.GetContext(player);
-            Sprite composed = PlayerSkinComposer.Compose(sprite, context);
+            Sprite source = sprite;
+            Sprite composed = PlayerSkinComposer.Compose(source, context);
 
-            sprite = Get(composed ?? sprite, playerNumber);
-            AppliedDrawSprites[player] = sprite;
+            sprite = Get(composed ?? source, playerNumber);
+            AppliedDrawSprites[player] = new Applied(source, sprite, signature);
+        }
+
+        private readonly struct Applied
+        {
+            public readonly Sprite Source;
+            public readonly Sprite Result;
+            public readonly string Signature;
+
+            public Applied(Sprite source, Sprite result, string signature)
+            {
+                Source = source;
+                Result = result;
+                Signature = signature;
+            }
         }
 
         public static Sprite Get(Sprite source, int playerNumber)
