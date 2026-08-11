@@ -64,6 +64,7 @@
 		<Compile Include="MultiplayerRuntime.cs" />
 		<Compile Include="PlayerContext.cs" />
 		<Compile Include="PlayerScope.cs" />
+		<Compile Include="PlayerSkinComposer.cs" />
 		<Compile Include="PlayerSpriteFactory.cs" />
 		<Compile Include="ReplayIsolation.cs" />
 		<Compile Include="UserCommandRouting.cs" />

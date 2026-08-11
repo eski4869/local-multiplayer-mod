@@ -19,7 +19,7 @@ namespace LocalMultiplayerMod
     /// </summary>
     internal static class ItemToggles
     {
-        private static readonly Items[] PerPlayerItems =
+        internal static readonly Items[] PerPlayerItems =
         {
             Items.GiantBoots,
             Items.SnakeRing

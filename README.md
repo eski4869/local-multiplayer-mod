@@ -150,6 +150,13 @@ knows which user sent a toggle should route it through `ToggleItem`.
 In single player no override is ever set, the shims never intercept, and the
 game behaves exactly as it does without this mod installed.
 
+Equipment is also drawn per player. The base game keeps one sprite layer list
+shared by everyone, so an additional player would otherwise wear player 1's
+equipment; the layer list is rebuilt from that player's own items instead. Only
+additional players reach that code - player 1 keeps drawing the game's own
+sprites, which is already correct because the global equip state is the one the
+local pad toggles.
+
 ### Known limits
 
 - Some SwitchBlocks switch types do not respond for additional players. Warp,
