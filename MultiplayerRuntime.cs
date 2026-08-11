@@ -874,19 +874,56 @@ namespace LocalMultiplayerMod
             }
 
             screen.Draw();
-            EntityManager.instance.Draw();
+            DrawWorldEntities();
             screen.DrawForeground();
 
             IReadOnlyList<Entity> entities = EntityManager.instance.Entities;
             for (int i = 0; i < entities.Count; i++)
             {
                 var foreground = entities[i] as IForeground;
-                if (foreground != null)
+                if (foreground != null && !IsScreenSpaceUi(entities[i]))
                 {
                     foreground.ForegroundDraw();
                 }
             }
         }
+
+        /// <summary>
+        /// EntityManager.Draw would draw every entity, including the pause menu,
+        /// so the loop is repeated here with the screen-space ones left out.
+        /// </summary>
+        private static void DrawWorldEntities()
+        {
+            IReadOnlyList<Entity> entities = EntityManager.instance.Entities;
+            for (int i = 0; i < entities.Count; i++)
+            {
+                if (!IsScreenSpaceUi(entities[i]))
+                {
+                    entities[i].Draw();
+                }
+            }
+        }
+
+        /// <summary>
+        /// The pause menu is an Entity that also implements IForeground, and its
+        /// ForegroundDraw just calls Draw, so the world pass would render it
+        /// twice per view. It is screen-space UI at fixed coordinates and the
+        /// base game already draws it from GameLoop.Draw, which the split
+        /// renderer runs once over the composited views - so every copy the world
+        /// pass makes is a duplicate.
+        ///
+        /// The other IForeground types in the base game - the old man, the
+        /// merchant, lightning, location text - are anchored in the world and
+        /// belong in the per-view pass, so they are deliberately not listed here.
+        /// </summary>
+        private static bool IsScreenSpaceUi(Entity entity)
+        {
+            return PauseManagerType != null &&
+                PauseManagerType.IsInstanceOfType(entity);
+        }
+
+        private static readonly Type PauseManagerType =
+            AccessTools.TypeByName("JumpKing.PauseMenu.PauseManager");
 
         private static int GetViewPlayerMask(int targetIndex, int playerCount)
         {
