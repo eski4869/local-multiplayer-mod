@@ -255,6 +255,16 @@ namespace LocalMultiplayerMod
             return new LocalMultiplayerModeOption();
         }
 
+        [PauseMenuItemSetting]
+        [MainMenuItemSetting]
+        public static LocalMultiplayerSplitOption LocalMultiplayerSplitMenu(
+            object factory,
+            JumpKing.PauseMenu.GuiFormat format
+        )
+        {
+            return new LocalMultiplayerSplitOption();
+        }
+
         private static void EnsurePatched()
         {
             if (_harmony != null)
@@ -822,11 +832,16 @@ namespace LocalMultiplayerMod
         Stacked
     }
 
+    /// <summary>
+    /// How many players. Kept separate from the split layout so each menu line
+    /// stays short enough to fit, and so changing one does not read as changing
+    /// the other.
+    /// </summary>
     public class LocalMultiplayerModeOption : IOptions
     {
         public LocalMultiplayerModeOption() : base(
-            5,
-            ModeToOption(ModEntry.PlayerCount, ModEntry.TwoPlayerLayout),
+            3,
+            PlayerCountToOption(ModEntry.PlayerCount),
             IOptions.EdgeMode.Wrap
         )
         {
@@ -842,58 +857,37 @@ namespace LocalMultiplayerMod
             switch (CurrentOption)
             {
                 case 1:
-                    return "Multiplayer: 2P";
+                    return "Players: 2";
                 case 2:
-                    return "Multiplayer: 2P Compact";
-                case 3:
-                    return "Multiplayer: 2P Stacked";
-                case 4:
-                    return "Multiplayer: 4P";
+                    return "Players: 4";
                 default:
-                    return "Multiplayer: 1P";
+                    return "Players: 1";
             }
         }
 
         protected override void OnOptionChange(int option)
         {
             int playerCount = OptionToPlayerCount(option);
-            TwoPlayerLayout layout = OptionToLayout(option);
-            if (ModEntry.SetPlayerMode(playerCount, layout))
+            if (ModEntry.SetPlayerMode(playerCount, ModEntry.TwoPlayerLayout))
             {
                 CurrentOption = option;
                 return;
             }
 
-            CurrentOption = ModeToOption(
-                ModEntry.PlayerCount,
-                ModEntry.TwoPlayerLayout
-            );
+            CurrentOption = PlayerCountToOption(ModEntry.PlayerCount);
         }
 
-        private static int ModeToOption(
-            int playerCount,
-            TwoPlayerLayout layout
-        )
+        private static int PlayerCountToOption(int playerCount)
         {
-            if (playerCount == 4)
+            switch (playerCount)
             {
-                return 4;
+                case 2:
+                    return 1;
+                case 4:
+                    return 2;
+                default:
+                    return 0;
             }
-
-            if (playerCount == 2)
-            {
-                switch (layout)
-                {
-                    case TwoPlayerLayout.Compact:
-                        return 2;
-                    case TwoPlayerLayout.Stacked:
-                        return 3;
-                    default:
-                        return 1;
-                }
-            }
-
-            return 0;
         }
 
         private static int OptionToPlayerCount(int option)
@@ -901,13 +895,69 @@ namespace LocalMultiplayerMod
             switch (option)
             {
                 case 1:
-                case 2:
-                case 3:
                     return 2;
-                case 4:
+                case 2:
                     return 4;
                 default:
                     return 1;
+            }
+        }
+    }
+
+    /// <summary>
+    /// How the screen is divided in two player. Has no effect on one or four
+    /// players, so the label says which mode it belongs to.
+    /// </summary>
+    public class LocalMultiplayerSplitOption : IOptions
+    {
+        public LocalMultiplayerSplitOption() : base(
+            3,
+            LayoutToOption(ModEntry.TwoPlayerLayout),
+            IOptions.EdgeMode.Wrap
+        )
+        {
+        }
+
+        protected override bool CanChange()
+        {
+            return true;
+        }
+
+        protected override string CurrentOptionName()
+        {
+            switch (CurrentOption)
+            {
+                case 1:
+                    return "2P View: Compact";
+                case 2:
+                    return "2P View: Stacked";
+                default:
+                    return "2P View: Side";
+            }
+        }
+
+        protected override void OnOptionChange(int option)
+        {
+            TwoPlayerLayout layout = OptionToLayout(option);
+            if (ModEntry.SetPlayerMode(ModEntry.PlayerCount, layout))
+            {
+                CurrentOption = option;
+                return;
+            }
+
+            CurrentOption = LayoutToOption(ModEntry.TwoPlayerLayout);
+        }
+
+        private static int LayoutToOption(TwoPlayerLayout layout)
+        {
+            switch (layout)
+            {
+                case TwoPlayerLayout.Compact:
+                    return 1;
+                case TwoPlayerLayout.Stacked:
+                    return 2;
+                default:
+                    return 0;
             }
         }
 
@@ -915,9 +965,9 @@ namespace LocalMultiplayerMod
         {
             switch (option)
             {
-                case 2:
+                case 1:
                     return TwoPlayerLayout.Compact;
-                case 3:
+                case 2:
                     return TwoPlayerLayout.Stacked;
                 default:
                     return TwoPlayerLayout.FullHeight;
