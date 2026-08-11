@@ -53,7 +53,14 @@ namespace LocalMultiplayerMod
                 return;
             }
 
-            sprite = Get(sprite, playerNumber);
+            // Rebuild the layers from this player's own equipment before
+            // recolouring, so the recolour caches see the individual base and
+            // layer sprites, which are stable, rather than a freshly composed
+            // one every frame.
+            PlayerContext context = MultiplayerRuntime.GetContext(player);
+            Sprite composed = PlayerSkinComposer.Compose(sprite, context);
+
+            sprite = Get(composed ?? sprite, playerNumber);
             AppliedDrawSprites[player] = sprite;
         }
 
@@ -131,6 +138,7 @@ namespace LocalMultiplayerMod
             }
 
             AppliedDrawSprites.Clear();
+            PlayerSkinComposer.Release();
         }
 
         private static Sprite GetLayeredSprite(
