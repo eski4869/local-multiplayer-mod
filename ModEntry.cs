@@ -809,14 +809,23 @@ namespace LocalMultiplayerMod
 
     public enum TwoPlayerLayout
     {
+        /// <summary>Side by side, each player getting half the width.</summary>
         FullHeight,
-        Compact
+
+        /// <summary>Side by side at half scale, letterboxed above and below.</summary>
+        Compact,
+
+        /// <summary>
+        /// One above the other, each player keeping the full width. Suits a map
+        /// whose route runs sideways rather than straight up.
+        /// </summary>
+        Stacked
     }
 
     public class LocalMultiplayerModeOption : IOptions
     {
         public LocalMultiplayerModeOption() : base(
-            4,
+            5,
             ModeToOption(ModEntry.PlayerCount, ModEntry.TwoPlayerLayout),
             IOptions.EdgeMode.Wrap
         )
@@ -837,6 +846,8 @@ namespace LocalMultiplayerMod
                 case 2:
                     return "Multiplayer: 2P Compact";
                 case 3:
+                    return "Multiplayer: 2P Stacked";
+                case 4:
                     return "Multiplayer: 4P";
                 default:
                     return "Multiplayer: 1P";
@@ -866,12 +877,20 @@ namespace LocalMultiplayerMod
         {
             if (playerCount == 4)
             {
-                return 3;
+                return 4;
             }
 
             if (playerCount == 2)
             {
-                return layout == TwoPlayerLayout.Compact ? 2 : 1;
+                switch (layout)
+                {
+                    case TwoPlayerLayout.Compact:
+                        return 2;
+                    case TwoPlayerLayout.Stacked:
+                        return 3;
+                    default:
+                        return 1;
+                }
             }
 
             return 0;
@@ -879,14 +898,30 @@ namespace LocalMultiplayerMod
 
         private static int OptionToPlayerCount(int option)
         {
-            return option == 3 ? 4 : option == 1 || option == 2 ? 2 : 1;
+            switch (option)
+            {
+                case 1:
+                case 2:
+                case 3:
+                    return 2;
+                case 4:
+                    return 4;
+                default:
+                    return 1;
+            }
         }
 
         private static TwoPlayerLayout OptionToLayout(int option)
         {
-            return option == 2
-                ? TwoPlayerLayout.Compact
-                : TwoPlayerLayout.FullHeight;
+            switch (option)
+            {
+                case 2:
+                    return TwoPlayerLayout.Compact;
+                case 3:
+                    return TwoPlayerLayout.Stacked;
+                default:
+                    return TwoPlayerLayout.FullHeight;
+            }
         }
     }
 }

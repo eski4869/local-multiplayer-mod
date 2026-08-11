@@ -652,13 +652,17 @@ namespace LocalMultiplayerMod
 
             if (playerCount == 2)
             {
-                if (ModEntry.TwoPlayerLayout == TwoPlayerLayout.Compact)
+                switch (ModEntry.TwoPlayerLayout)
                 {
-                    DrawCompactTwoPlayerViews();
-                }
-                else
-                {
-                    DrawTwoPlayerViews();
+                    case TwoPlayerLayout.Compact:
+                        DrawCompactTwoPlayerViews();
+                        break;
+                    case TwoPlayerLayout.Stacked:
+                        DrawStackedTwoPlayerViews();
+                        break;
+                    default:
+                        DrawTwoPlayerViews();
+                        break;
                 }
             }
             else
@@ -745,6 +749,43 @@ namespace LocalMultiplayerMod
             int centerX = body == null ? Width / 2 : body.GetHitbox().Center.X;
             int sourceX = centerX < HalfWidth ? 0 : HalfWidth;
             return new Rectangle(sourceX, 0, HalfWidth, Height);
+        }
+
+        /// <summary>
+        /// Player 1 on top, player 2 below, each keeping the full screen width.
+        ///
+        /// Suits a map whose route runs sideways, where a half-width view cuts
+        /// off what the player needs to see. Each band is a one to one slice of
+        /// that player's own render, chosen by which half of the screen they are
+        /// standing in, so nothing is squashed.
+        /// </summary>
+        private static void DrawStackedTwoPlayerViews()
+        {
+            for (int i = 0; i < 2; i++)
+            {
+                Game1.spriteBatch.Draw(
+                    PlayerTargets[ViewTargetIndexes[i]],
+                    new Rectangle(0, i * HalfHeight, Width, HalfHeight),
+                    GetPlayerBandViewport(ViewContexts[i]),
+                    Color.White
+                );
+            }
+        }
+
+        private static Rectangle GetPlayerBandViewport(PlayerContext context)
+        {
+            BodyComp body = context == null ? null : context.Body;
+            if (body == null)
+            {
+                return new Rectangle(0, 0, Width, HalfHeight);
+            }
+
+            // World Y runs negative upward and every screen is exactly one
+            // screen height, so the remainder is the position within whichever
+            // screen the player is on. The extra term keeps it positive.
+            int withinScreen = ((body.GetHitbox().Center.Y % Height) + Height) % Height;
+            int sourceY = withinScreen < HalfHeight ? 0 : HalfHeight;
+            return new Rectangle(0, sourceY, Width, HalfHeight);
         }
 
         private static void DrawFourPlayerViews()
