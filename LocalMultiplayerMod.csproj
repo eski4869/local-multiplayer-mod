@@ -55,6 +55,7 @@
 		</Reference>
 	</ItemGroup>
 	<ItemGroup>
+		<Compile Include="BattleMode.cs" />
 		<Compile Include="BrokerCommandClient.cs" />
 		<Compile Include="ModEntry.cs" />
 		<Compile Include="GlobalShims.cs" />

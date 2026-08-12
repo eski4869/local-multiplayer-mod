@@ -81,6 +81,38 @@ namespace LocalMultiplayerMod
             }
         }
 
+        /// <summary>
+        /// Whether players fight each other. Only meaningful alongside more than
+        /// one player, and <see cref="BattleMode"/> checks that itself, so the
+        /// setting can be left on while dropping back to one player.
+        /// </summary>
+        internal static bool IsBattleMode
+        {
+            get
+            {
+                EnsurePreferencesLoaded();
+                return _preferences.BattleMode;
+            }
+        }
+
+        internal static bool SetBattleMode(bool enabled)
+        {
+            EnsurePreferencesLoaded();
+            if (_preferences.BattleMode == enabled)
+            {
+                return true;
+            }
+
+            _preferences.BattleMode = enabled;
+            SavePreferences();
+
+            // A round already in progress does not survive the switch: coming
+            // back to battle mode should start even, not resume half-fought
+            // health from before it was turned off.
+            BattleMode.ResetRound();
+            return true;
+        }
+
         internal static PlayerTargets ResolvePlayerTargets(string user)
         {
             EnsurePreferencesLoaded();
@@ -265,6 +297,16 @@ namespace LocalMultiplayerMod
             return new LocalMultiplayerSplitOption();
         }
 
+        [PauseMenuItemSetting]
+        [MainMenuItemSetting]
+        public static LocalMultiplayerBattleOption LocalMultiplayerBattleMenu(
+            object factory,
+            JumpKing.PauseMenu.GuiFormat format
+        )
+        {
+            return new LocalMultiplayerBattleOption();
+        }
+
         private static void EnsurePatched()
         {
             if (_harmony != null)
@@ -281,6 +323,28 @@ namespace LocalMultiplayerMod
                 AccessTools.Method(typeof(Game1), "Update"),
                 typeof(LocalMultiplayerGameUpdatePatch),
                 "Game1.Update"
+            );
+
+            // Battle mode. Stomps are resolved after the whole frame has moved,
+            // so this is a second patch on the same method rather than more work
+            // inside the prefix above.
+            complete &= TryPatch(
+                harmony,
+                AccessTools.Method(typeof(Game1), "Update"),
+                typeof(BattleUpdatePatch),
+                "Game1.Update (battle)"
+            );
+            complete &= TryPatch(
+                harmony,
+                AccessTools.Method(typeof(PlayerEntity), "Draw"),
+                typeof(BattlePlayerDrawPatch),
+                "PlayerEntity.Draw (battle gauge)"
+            );
+            complete &= TryPatch(
+                harmony,
+                AccessTools.Method(typeof(FailState), "Start"),
+                typeof(BattleSplatPatch),
+                "FailState.Start"
             );
 
             // Additional players have no physical pad.
@@ -707,6 +771,7 @@ namespace LocalMultiplayerMod
         public int PlayerCount { get; set; } = 1;
         public TwoPlayerLayout TwoPlayerLayout { get; set; } =
             TwoPlayerLayout.FullHeight;
+        public bool BattleMode { get; set; } = false;
         public SingleModePreferences SingleMode { get; set; } =
             new SingleModePreferences();
         public MultiplayerModePreferences MultiplayerMode { get; set; } =
@@ -829,7 +894,18 @@ namespace LocalMultiplayerMod
         /// One above the other, each player keeping the full width. Suits a map
         /// whose route runs sideways rather than straight up.
         /// </summary>
-        Stacked
+        Stacked,
+
+        /// <summary>
+        /// No split at all: one full-size view on player 1's camera, with the
+        /// other player drawn into it.
+        ///
+        /// Two cameras are hard to read when the players are meant to be
+        /// interacting rather than racing - in battle mode especially, the point
+        /// is that both kings are in the same picture. The cost is that player 2
+        /// is only visible while they are inside player 1's screen.
+        /// </summary>
+        Shared
     }
 
     /// <summary>
@@ -911,7 +987,7 @@ namespace LocalMultiplayerMod
     public class LocalMultiplayerSplitOption : IOptions
     {
         public LocalMultiplayerSplitOption() : base(
-            3,
+            4,
             LayoutToOption(ModEntry.TwoPlayerLayout),
             IOptions.EdgeMode.Wrap
         )
@@ -931,6 +1007,8 @@ namespace LocalMultiplayerMod
                     return "2P View: Compact";
                 case 2:
                     return "2P View: Stacked";
+                case 3:
+                    return "2P View: Shared";
                 default:
                     return "2P View: Side";
             }
@@ -956,6 +1034,8 @@ namespace LocalMultiplayerMod
                     return 1;
                 case TwoPlayerLayout.Stacked:
                     return 2;
+                case TwoPlayerLayout.Shared:
+                    return 3;
                 default:
                     return 0;
             }
@@ -969,9 +1049,47 @@ namespace LocalMultiplayerMod
                     return TwoPlayerLayout.Compact;
                 case 2:
                     return TwoPlayerLayout.Stacked;
+                case 3:
+                    return TwoPlayerLayout.Shared;
                 default:
                     return TwoPlayerLayout.FullHeight;
             }
+        }
+    }
+
+    /// <summary>
+    /// Whether players fight. Kept as its own line rather than folded into the
+    /// player count, so neither label has to grow to carry both.
+    /// </summary>
+    public class LocalMultiplayerBattleOption : IOptions
+    {
+        public LocalMultiplayerBattleOption() : base(
+            2,
+            ModEntry.IsBattleMode ? 1 : 0,
+            IOptions.EdgeMode.Wrap
+        )
+        {
+        }
+
+        protected override bool CanChange()
+        {
+            return true;
+        }
+
+        protected override string CurrentOptionName()
+        {
+            return CurrentOption == 1 ? "Battle: On" : "Battle: Off";
+        }
+
+        protected override void OnOptionChange(int option)
+        {
+            if (ModEntry.SetBattleMode(option == 1))
+            {
+                CurrentOption = option;
+                return;
+            }
+
+            CurrentOption = ModEntry.IsBattleMode ? 1 : 0;
         }
     }
 }

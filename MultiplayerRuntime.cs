@@ -157,6 +157,8 @@ namespace LocalMultiplayerMod
             {
                 BeforeModLevelStart();
             }
+
+            BattleMode.OnLevelStart();
         }
 
         public static void OnLevelEnd()
@@ -612,6 +614,16 @@ namespace LocalMultiplayerMod
                 ViewContexts[i] = context;
             }
 
+            if (playerCount == 2 &&
+                ModEntry.TwoPlayerLayout == TwoPlayerLayout.Shared)
+            {
+                // One camera, so there is nothing to composite - the render
+                // targets are skipped entirely rather than drawn and blitted at
+                // full size for no gain.
+                DrawSharedView(game);
+                return false;
+            }
+
             GraphicsDevice graphics = host.GraphicsDevice;
             EnsureTargets(graphics, playerCount);
 
@@ -671,8 +683,46 @@ namespace LocalMultiplayerMod
             }
 
             DrawScreenSpaceUi(game);
+
+            // The round result belongs to the match, not to a camera, so it is
+            // drawn once over the composited views like the rest of the UI.
+            BattleMode.DrawRoundResult();
             return false;
         }
+
+        /// <summary>
+        /// The whole screen on player 1's camera, with everyone drawn into it.
+        ///
+        /// The batch Game1 opened is still current here - unlike the split path
+        /// there are no render targets to swap - so the world can be drawn
+        /// straight into it. Both players count as being in this view, since
+        /// that is literally true, which is what world-anchored overlays from
+        /// other mods ask before drawing themselves.
+        /// </summary>
+        private static void DrawSharedView(JumpGame game)
+        {
+            _drawingPass = true;
+            LocalMultiplayerApi.SetCurrentViewPlayerMask(SharedViewPlayerMask);
+
+            try
+            {
+                using (PlayerScope.Enter(ViewContexts[0], false, false))
+                {
+                    DrawWorld();
+                }
+            }
+            finally
+            {
+                _drawingPass = false;
+                LocalMultiplayerApi.SetCurrentViewPlayerMask(1);
+            }
+
+            DrawScreenSpaceUi(game);
+            BattleMode.DrawRoundResult();
+        }
+
+        /// <summary>Both players, since one view holds them both.</summary>
+        private const int SharedViewPlayerMask = (1 << 0) | (1 << 1);
 
         /// <summary>
         /// Draws the screen-space UI once over the composited views, at full size.
