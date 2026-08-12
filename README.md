@@ -14,10 +14,81 @@ Use `Local Multiplayer` in the main or pause menu to select:
 - 2 Players (Stacked), one above the other with 480 x 180 views, so each player
   keeps the full screen width. Suits a map whose route runs sideways, where half
   the width cuts off what the player needs to see
+- 2 Players (Shared), no split at all: one full-size view on player 1's camera
+  with the other player drawn into it
 - 4 Players
+
+`Shared` is for playing together in one picture rather than racing in two. Two
+cameras are hard to read when the players are meant to be interacting, which is
+what battle mode is for. The trade is that player 2 is only visible while inside
+player 1's screen — they keep playing when they leave it, they just cannot be
+seen. Collision, items and the win check all still resolve against each player's
+own camera; only the drawing is shared.
 
 Changing from Single Player to a multiplayer mode reloads the user-routing
 rules from `eski4869.LocalMultiplayerMod.Settings.xml`.
+
+## Battle mode
+
+`Battle: On` in the same menu turns the climb into a fight. Each king carries a
+health gauge above their head, and there are two ways to lose it.
+
+| Source | Damage | |
+| --- | --- | --- |
+| Landing on another player's head | 20 | Flattens them into the game's splat |
+| A splat landing | 12 | The game's own splat, so terminal velocity only |
+
+Five clean stomps take a round. When someone runs out, the winner is announced
+for three seconds and everybody is healed to full — positions are left alone, so
+nobody loses the height they climbed.
+
+The two damage sources are meant to pull against each other. Getting above an
+opponent is the only way to land on them, so height is what wins fights; but a
+stomp that misses leaves you falling from that same height, and the splat at the
+bottom costs you health as well. A landed stomp cancels the fall, so the attack
+also saves you from the fall it created.
+
+A stomp puts the victim into the base game's splat: flattened, held there until
+they press something, and with their horizontal velocity zeroed. Being caught
+mid-jump therefore also costs the rest of that jump. The attacker rebounds at
+half the speed they arrived with, capped — the same restitution the game gives a
+wall, so dropping further bounces higher and stepping off a ledge barely hops.
+
+Nothing checks how fast the attacker was moving sideways, only that they were
+coming down and their feet reached the top of the other player. Diving in at an
+angle from a height is a stomp; arriving level is not.
+
+### Side contact
+
+Players who meet at the same height trade horizontal velocity, as two equal
+masses would, keeping 70% of the exchange so a collision settles instead of
+firing both away harder than they arrived. It costs no health directly — the
+damage comes from where the shove leaves you.
+
+Only the horizontal is traded. Swapping the vertical too would let a falling
+player hand off their fall and hang in the air.
+
+A player standing still is lifted off the ground by the equivalent of a
+two-frame jump charge. That is not decoration: `Walk` rewrites `Velocity.X`
+every frame a player is on the floor, so a purely sideways shove is erased
+before it moves anyone.
+
+### Details that follow
+
+- The attacker must be moving downward *and* have actually changed position, so
+  a pair left overlapping across a pause cannot trade hits while nothing moves.
+- The victim is safe for 24 frames after a hit, and a pair cannot trade another
+  shove for 12. Players have no collision with each other, so without this one
+  landing would register every frame the boxes stayed overlapped.
+- Only players on the same screen touch. Screens sit 360 apart in world space,
+  so two players in rooms a map joins left-to-right through a teleport are
+  physically about one body height apart — close enough to overlap without being
+  anywhere near each other on screen. The cost is that contact across a screen
+  boundary does not register either.
+- Reaching the ending still ends the race for everyone, battle mode or not.
+
+The setting is independent of the player count, so it can be left on while
+dropping back to Single Player, where it does nothing.
 
 ## User routing
 
