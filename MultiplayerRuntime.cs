@@ -132,6 +132,7 @@ namespace LocalMultiplayerMod
         {
             _levelStarted = true;
             _raceComplete = false;
+            MultiplayerStartPositions.Reset();
             Contexts[0] = CreatePrimaryContext();
 
             if (ModEntry.IsMultiplayerEnabled)
@@ -315,19 +316,47 @@ namespace LocalMultiplayerMod
                     ItemToggles.Seed(context);
                     PlayerSpriteFactory.Prepare(number);
 
+                    Vector2 spawnPosition;
+                    Vector2 spawnVelocity;
+                    bool hasOwnSpawn = MultiplayerStartPositions.TryGet(
+                        number,
+                        out spawnPosition,
+                        out spawnVelocity
+                    );
+
                     if (context.Body != null)
                     {
-                        context.Body.Position = primary.Body.Position;
-                        context.Body.Velocity = Vector2.Zero;
+                        context.Body.Position =
+                            hasOwnSpawn ? spawnPosition : primary.Body.Position;
+                        context.Body.Velocity =
+                            hasOwnSpawn ? spawnVelocity : Vector2.Zero;
                     }
 
                     // The camera now lives in the context and is driven by this
                     // player's own CameraFollowComp inside its scope, so the
                     // component stays enabled - unlike the previous design, which
                     // disabled it and recomputed the screen in two separate places.
-                    context.Screen = primary.Screen;
-                    context.Offset = primary.Offset;
-                    context.CameraSeeded = primary.CameraSeeded;
+                    //
+                    // A map-defined spawn gets its own screen computed the same
+                    // way the base game's teleport handler does, rather than
+                    // inheriting player 1's - the two can be on different screens
+                    // entirely. Seeding it here means PlayerScope.Enter's own
+                    // seed-from-the-live-camera path, which is only correct when
+                    // this player starts wherever player 1's camera already is,
+                    // never runs for this player.
+                    if (hasOwnSpawn)
+                    {
+                        context.Screen = -(int)Math.Floor(spawnPosition.Y / 360f);
+                        context.Offset = Vector2.Zero;
+                        context.CameraSeeded = true;
+                    }
+                    else
+                    {
+                        context.Screen = primary.Screen;
+                        context.Offset = primary.Offset;
+                        context.CameraSeeded = primary.CameraSeeded;
+                    }
+
                     context.SaveState = SaveLubeAccess.GetPlayerPosition();
                 }
                 catch (Exception ex)
@@ -925,6 +954,7 @@ namespace LocalMultiplayerMod
 
             screen.Draw();
             DrawWorldEntities();
+            BattleMode.DrawWorldProps();
             screen.DrawForeground();
 
             IReadOnlyList<Entity> entities = EntityManager.instance.Entities;

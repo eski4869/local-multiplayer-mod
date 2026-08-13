@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
 	<PropertyGroup>
 		<Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
@@ -56,13 +56,17 @@
 	</ItemGroup>
 	<ItemGroup>
 		<Compile Include="BattleMode.cs" />
+		<Compile Include="BattleProps.cs" />
+		<Compile Include="BattleSprites.cs" />
 		<Compile Include="BrokerCommandClient.cs" />
 		<Compile Include="ModEntry.cs" />
 		<Compile Include="GlobalShims.cs" />
 		<Compile Include="ItemToggles.cs" />
 		<Compile Include="LevelStartReplay.cs" />
 		<Compile Include="LocalMultiplayerApi.cs" />
+		<Compile Include="LocalMultiplayerLevelFile.cs" />
 		<Compile Include="MultiplayerRuntime.cs" />
+		<Compile Include="MultiplayerStartPositions.cs" />
 		<Compile Include="PlayerContext.cs" />
 		<Compile Include="PlayerScope.cs" />
 		<Compile Include="PlayerSkinComposer.cs" />
