@@ -1,7 +1,8 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using JumpKing;
 using JumpKing.Player;
+using JumpKing.SaveThread;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 
@@ -26,78 +27,67 @@ namespace LocalMultiplayerMod
     {
         internal const int MaxHealth = 100;
 
-        /// <summary>Landing on a head. Five clean stomps win a round.</summary>
-        private const int StompDamage = 20;
-
         /// <summary>
-        /// A splat landing. Lower than a stomp so that falling is a setback
-        /// rather than the main way rounds are decided, but high enough that
-        /// spamming height is punished.
-        /// </summary>
-        private const int FallDamage = 12;
-
-        /// <summary>
-        /// Ceiling on the rebound, about a sixteen frame charge against a full
-        /// jump's thirty-six. Enough to break contact and read as a bounce,
-        /// short of being free height - staying on top is the position that was
-        /// already winning.
-        /// </summary>
-        private const float MaximumBounce = 4f;
-
-        /// <summary>
-        /// How much of the victim's box counts as the head. The attacker's feet
-        /// have to be inside this band, so passing through someone sideways or
-        /// rising into them from below is not a hit.
-        /// </summary>
-        private const int HeadBand = 12;
-
-        /// <summary>
-        /// Frames the victim cannot be hit again. Players have no collision with
-        /// each other, so without this the boxes stay overlapped and one landing
-        /// would register every frame.
-        /// </summary>
-        private const int HitInvulnerabilityFrames = 24;
-
-        /// <summary>
-        /// A side hit is charged as a jump rather than as an invented impulse,
-        /// because that is the only motion the game already knows how to give a
-        /// player. Two frames of charge: enough to leave the ground, which is
-        /// what actually matters - <c>Walk</c> rewrites <c>Velocity.X</c> every
-        /// frame a player is standing, so a purely horizontal shove is erased
-        /// before it moves anyone. The lift is what lets the push land at all.
+        /// How many maximum-speed hits win a round.
         ///
-        /// The horizontal half is not scaled: <c>DoJump</c> adds a full
-        /// <c>SPEED</c> whatever the charge, so a nudged player travels sideways
-        /// exactly as fast as one who jumped there themselves.
+        /// This is the one number in the combat model that is a design decision
+        /// rather than a consequence of the game's own physics. Everything else
+        /// below is derived from constants the base game already defines, so
+        /// there is nothing to re-tune when one of them changes.
         /// </summary>
-        private const int PushJumpFrames = 2;
+        private const int CleanHitsPerRound = 5;
 
         /// <summary>
-        /// Charge frames in a full jump - <c>JUMP_TIME</c> is 0.6s at 60fps.
+        /// The lift a walking shove gives, in jump charge frames.
+        ///
+        /// The one bias in the collision model, and an unavoidable one:
+        /// <c>Walk</c> rewrites <c>Velocity.X</c> every frame a player is
+        /// standing, so a shove that leaves them on the ground is erased before
+        /// it moves anyone. Something has to lift them, and no law in the game
+        /// says by how much. The lift scales with the impulse actually
+        /// delivered; this only fixes where that scale is anchored.
         /// </summary>
-        private const float FullChargeFrames = 36f;
+        private const float WalkShoveChargeFrames = 2f;
+
+        /// <summary>Charge frames in a full jump.</summary>
+        private static readonly float FullChargeFrames =
+            PlayerValues.JUMP_TIME * PlayerValues.FPS;
 
         /// <summary>
-        /// Frames before the same pair can trade another push. Separate from the
-        /// damage window: being shoved should not also make someone briefly
-        /// immune to being stomped.
+        /// How much of the victim's box counts as the head.
+        ///
+        /// Exactly one frame of terminal velocity: on the first frame two boxes
+        /// overlap, an attacker who was above can have descended at most
+        /// <c>MAX_FALL</c>, so this is the smallest band that never misses a
+        /// stomp and never mistakes a level approach for one.
         /// </summary>
-        private const int PushCooldownFrames = 12;
+        private static readonly int HeadBand = (int)PlayerValues.MAX_FALL;
 
         /// <summary>
-        /// How fast the attacker has to be closing horizontally. Below this it
-        /// is drifting into someone, not hitting them.
+        /// Frames the victim cannot be hit again: the time the game itself
+        /// gives a splatted player to get up.
+        ///
+        /// These being out of step was what let a single landed stomp chain
+        /// into a whole round - the victim was still locked in their splat when
+        /// they became hittable again.
         /// </summary>
-        private const float MinimumApproachSpeed = 1f;
+        private static readonly int HitInvulnerabilityFrames =
+            (int)Math.Round(PlayerValues.SPLAT_TIME * PlayerValues.FPS);
 
         /// <summary>
-        /// How much of the trade survives the impact. At 1 the two players swap
-        /// horizontal velocity exactly, which sends both further than either
-        /// arrived; this keeps most of the exchange while losing enough that a
-        /// collision settles instead of escalating. The game's own wall bounce
-        /// keeps half, so this is the gentler end of the same idea.
+        /// The closing speed a contact needs: what a walking player brings.
+        /// Below that they are drifting into someone, not hitting them.
         /// </summary>
-        private const float Restitution = 0.7f;
+        private static readonly float MinimumApproachSpeed =
+            PlayerValues.WALK_SPEED;
+
+        /// <summary>
+        /// The impulse a walking player delivers to someone standing still.
+        /// The reference the lift is calibrated against, derived rather than
+        /// measured so it follows the restitution and walk speed.
+        /// </summary>
+        private static readonly float WalkShoveImpulse =
+            ((1f + PlayerValues.BOUNCE) / 2f) * PlayerValues.WALK_SPEED;
 
         /// <summary>How long the winner is announced before healing everyone.</summary>
         private const int RoundOverFrames = 180;
@@ -170,6 +160,103 @@ namespace LocalMultiplayerMod
         }
 
 
+        /// <summary>The head band, shared with props so a stomp means one thing.</summary>
+        internal static int HeadBandSize { get { return HeadBand; } }
+
+        /// <summary>The rebound for landing on something, shared with props.</summary>
+        internal static float ReboundOff(float impactSpeed)
+        {
+            return Bounce(impactSpeed);
+        }
+
+        internal static Texture2D Pixel { get { return GetPixel(); } }
+
+        /// <summary>Current health, so a prop can tell whether its hit landed.</summary>
+        internal static int HealthOf(PlayerContext context)
+        {
+            Fighter fighter = GetFighter(context);
+            return fighter == null ? 0 : fighter.Health;
+        }
+
+        /// <summary>
+        /// Restores health, capped at full. Returns false when there was
+        /// nothing to restore, so a pickup can decline to be consumed.
+        /// </summary>
+        internal static bool Heal(PlayerContext context, int amount)
+        {
+            Fighter fighter = GetFighter(context);
+            if (fighter == null || fighter.Health >= MaxHealth || amount <= 0)
+            {
+                return false;
+            }
+
+            fighter.Health = Math.Min(MaxHealth, fighter.Health + amount);
+            return true;
+        }
+
+        /// <summary>
+        /// Damage from something that is not another player. Goes through the
+        /// same invulnerability window, so a hazard cannot drain someone who is
+        /// already down and cannot stack with a stomp in the same instant.
+        /// </summary>
+        /// <summary>
+        /// The launch a hit of a given size throws you with.
+        ///
+        /// Read straight back out of the damage law: a hit worth this much
+        /// damage carries the impact speed that would have caused it, so the
+        /// same number decides how much it hurts and how far it throws you.
+        /// Expressed as a jump charge, because that is the only launch the game
+        /// itself produces.
+        ///
+        /// Nothing erases it. Both <c>Walk</c> and <c>FailState</c> sit behind
+        /// the player tree's <c>IsOnGround</c> guard, so neither runs while the
+        /// player is in the air - the horizontal survives the whole flight even
+        /// though they are flattened for it.
+        /// </summary>
+        internal static void Launch(PlayerContext context, int amount, float awayFromX)
+        {
+            if (context == null || context.Body == null)
+            {
+                return;
+            }
+
+            float scale = (float)MaxHealth / CleanHitsPerRound;
+            float intensity = (float)Math.Sqrt(
+                Math.Min(1f, Math.Max(0f, amount / scale))
+            );
+
+            int direction =
+                Math.Sign(context.Body.GetHitbox().Center.X - awayFromX);
+            if (direction == 0)
+            {
+                direction = 1;
+            }
+
+            context.Body.Velocity.Y = PlayerValues.JUMP * intensity;
+            context.Body.Velocity.X = direction * PlayerValues.SPEED * intensity;
+        }
+
+        internal static void Hurt(PlayerContext context, int amount)
+        {
+            Fighter fighter = GetFighter(context);
+            if (fighter == null || fighter.Invulnerable > 0 ||
+                amount <= 0 || _roundOverFrames > 0)
+            {
+                return;
+            }
+
+            fighter.Health -= amount;
+            fighter.Invulnerable = HitInvulnerabilityFrames;
+            ForceSplat(context.Player);
+            PlayHitSound();
+
+            if (fighter.Health <= 0)
+            {
+                fighter.Health = 0;
+                EndRound(context, MultiplayerRuntime.GetActiveContexts());
+            }
+        }
+
         private static Fighter GetFighter(PlayerContext context)
         {
             if (context == null)
@@ -192,6 +279,7 @@ namespace LocalMultiplayerMod
         {
             _roundOverFrames = 0;
             _winner = 0;
+            BattleProps.Reset();
         }
 
         /// <summary>
@@ -274,6 +362,21 @@ namespace LocalMultiplayerMod
             }
 
             ResolveContacts(contexts);
+            BattleProps.Update(contexts);
+        }
+
+        /// <summary>
+        /// Props are world objects, so they draw in the per-view world pass
+        /// alongside the players rather than with the screen-space UI.
+        /// </summary>
+        internal static void DrawWorldProps()
+        {
+            if (!IsEnabled)
+            {
+                return;
+            }
+
+            BattleProps.Draw();
         }
 
         /// <summary>
@@ -331,6 +434,30 @@ namespace LocalMultiplayerMod
         }
 
         /// <summary>
+        /// Whether a player is in the game's own splat: flattened, and held
+        /// there until they press something.
+        /// </summary>
+        private static bool IsDowned(PlayerContext context)
+        {
+            if (context == null || context.Player == null ||
+                FailStateField == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                var failState = FailStateField.GetValue(context.Player)
+                    as FailState;
+                return failState != null && failState.IsRunning();
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
         /// Which screen a box is on, by the same rule the camera uses.
         ///
         /// Screens are stacked in world space 360 apart, so two players in
@@ -374,10 +501,22 @@ namespace LocalMultiplayerMod
             List<PlayerContext> contexts
         )
         {
+            float impact = attacker.Body.Velocity.Y;
             Fighter victimFighter = GetFighter(victim);
-            victimFighter.Health -= StompDamage;
+            int damage = ImpactDamage(impact);
+
+            victimFighter.Health -= damage;
             victimFighter.Invulnerable = HitInvulnerabilityFrames;
-            attacker.Body.Velocity.Y = 0f - Bounce(attacker.Body.Velocity.Y);
+
+            // A player already flattened absorbs the landing instead of
+            // returning it - there is no spring left in a limp body. So hitting
+            // someone who is already down gives no height back, and every
+            // follow-up has to be set up from the ground again. That is what
+            // keeps standing over a fallen opponent from being worth much,
+            // without taking the exchange away: the picture stays, the rate
+            // does not.
+            float rebound = IsDowned(victim) ? 0f : Bounce(impact);
+            attacker.Body.Velocity.Y = 0f - rebound;
             ForceSplat(victim.Player);
             PlayHitSound();
 
@@ -389,18 +528,62 @@ namespace LocalMultiplayerMod
         }
 
         /// <summary>
-        /// How hard the attacker comes back off a head, from how hard they
-        /// arrived. A fixed rebound was the same whether the attacker dropped
-        /// from a rooftop or stepped off a ledge, so the gentle case reversed
-        /// far more speed than it carried in and looked like the player had
-        /// been fired upward by nothing.
+        /// How hard the attacker comes back off a head: the same restitution
+        /// the game gives a wall. A head is something solid you hit, and it
+        /// returns the same share of your speed.
         ///
-        /// The game's own wall bounce keeps half the speed it took, so a head
-        /// does the same.
+        /// No ceiling is needed. Terminal velocity is the fastest anyone can
+        /// arrive, and half of it is the rebound - the cap that used to sit
+        /// here was that number written down twice.
+        ///
+        /// This also decides how many hits a bounce chain lands, together with
+        /// the recovery window. Off a full-speed dive the first rebound stays
+        /// airborne longer than the victim's splat lasts, so a second stomp
+        /// connects; the one after that does not, and the chain ends at two.
         /// </summary>
         private static float Bounce(float impactSpeed)
         {
-            return Math.Min(impactSpeed * PlayerValues.BOUNCE, MaximumBounce);
+            return impactSpeed * PlayerValues.BOUNCE;
+        }
+
+        /// <summary>
+        /// Damage is the energy of the impact - speed squared, as a fraction of
+        /// terminal velocity.
+        ///
+        /// One law covers both ways a player loses health. A stomp hands the
+        /// impact to whoever is underneath; a splat is the same impact absorbed
+        /// by the player who made it. A full-speed landing therefore costs
+        /// exactly what a full-speed stomp deals, which is what makes climbing
+        /// worth it and falling hurt.
+        ///
+        /// Squared rather than linear because that is what an impact actually
+        /// carries, and because it settles the balance question by itself:
+        /// stepping off a ledge onto someone is worth almost nothing, so
+        /// trading pokes on level ground is never a way to win a round.
+        /// </summary>
+        private static int ImpactDamage(float impactSpeed)
+        {
+            float ratio = Math.Abs(impactSpeed) / PlayerValues.MAX_FALL;
+            if (ratio > 1f)
+            {
+                ratio = 1f;
+            }
+
+            float scale = (float)MaxHealth / CleanHitsPerRound;
+            int damage = (int)Math.Round(scale * ratio * ratio);
+            return damage < 1 ? 1 : damage;
+        }
+
+        /// <summary>
+        /// How long a lift keeps someone off the ground, from the game's own
+        /// gravity. Used as the window before the same pair can trade another
+        /// shove: you can be shoved again once you have your feet back.
+        /// </summary>
+        private static int FlightFrames(float upwardVelocity)
+        {
+            return (int)Math.Ceiling(
+                2f * Math.Abs(upwardVelocity) / PlayerValues.GRAVITY
+            );
         }
 
         /// <summary>
@@ -447,8 +630,11 @@ namespace LocalMultiplayerMod
                 return;
             }
 
-            float keep = (1f - Restitution) / 2f;
-            float give = (1f + Restitution) / 2f;
+            // The same restitution the game gives a wall. One player hitting
+            // another is the same kind of event as hitting terrain, so it keeps
+            // the same share of the speed that went into it.
+            float keep = (1f - PlayerValues.BOUNCE) / 2f;
+            float give = (1f + PlayerValues.BOUNCE) / 2f;
 
             Apply(
                 first,
@@ -461,8 +647,6 @@ namespace LocalMultiplayerMod
                 give * firstVelocity + keep * secondVelocity
             );
 
-            firstFighter.PushCooldown = PushCooldownFrames;
-            secondFighter.PushCooldown = PushCooldownFrames;
             PlayCollisionSound();
         }
 
@@ -472,23 +656,34 @@ namespace LocalMultiplayerMod
             float velocityX
         )
         {
-            context.Body.Velocity.X = Math.Max(
+            float velocity = Math.Max(
                 0f - PlayerValues.SPEED,
                 Math.Min(PlayerValues.SPEED, velocityX)
             );
 
+            // How much speed this player actually gained or lost in the
+            // collision, which is the impulse the other one delivered.
+            float impulse = Math.Abs(velocity - fighter.StartVelocityX);
+            context.Body.Velocity.X = velocity;
+
             if (fighter.WasAirborne)
             {
+                // Already off the ground, so the horizontal survives on its own
+                // and there is nothing to lift.
                 return;
             }
 
-            // Standing players need lifting off the ground for any of this to
+            // Standing players have to leave the ground for any of this to
             // survive: Walk rewrites Velocity.X every frame a player is on the
-            // floor, so a shove that leaves them standing is erased before it
-            // moves them. The lift is charged as a jump so the height is one the
-            // game already produces.
-            context.Body.Velocity.Y =
-                PlayerValues.JUMP * (PushJumpFrames / FullChargeFrames);
+            // floor. The lift is charged as a jump, because that is the only
+            // vertical motion the game itself produces, and scales with the
+            // impulse - a running jump into someone knocks them further off
+            // their feet than a walk does.
+            float chargeFrames =
+                WalkShoveChargeFrames * (impulse / WalkShoveImpulse);
+            float lift = PlayerValues.JUMP * (chargeFrames / FullChargeFrames);
+            context.Body.Velocity.Y = lift;
+            fighter.PushCooldown = FlightFrames(lift);
         }
 
         /// <summary>
@@ -535,13 +730,31 @@ namespace LocalMultiplayerMod
             }
 
             PlayerContext context = MultiplayerRuntime.GetContext(player);
-            if (context == null || _roundOverFrames > 0)
+            if (context == null || _roundOverFrames > 0 || context.Body == null)
             {
                 return;
             }
 
+
+            // Charged on the speed actually landed at, not on the assumption
+            // that a splat is always terminal velocity.
+            //
+            // It usually is: FailState only starts when LastVelocity.Y equals
+            // MAX_FALL exactly. But the node sits behind the player tree's
+            // IsOnGround guard, so a splatted player who leaves the ground has
+            // it suspended mid-run, and ResumeRun calls Start again on landing
+            // without re-checking the speed. Assuming terminal velocity there
+            // turned a half-pixel nudge into a full-speed fall, which is what
+            // let a downed player be walked to death - a free twenty every time
+            // they were shoved.
+            //
+            // Reading the real speed makes that same nudge worth the one point
+            // an impact that small is worth, and leaves a genuine fall at the
+            // twenty it always was. One rule, no special case.
             Fighter fighter = GetFighter(context);
-            fighter.Health -= FallDamage;
+            int fallDamage = ImpactDamage(context.Body.LastVelocity.Y);
+
+            fighter.Health -= fallDamage;
             if (fighter.Health <= 0)
             {
                 fighter.Health = 0;
@@ -591,14 +804,46 @@ namespace LocalMultiplayerMod
             }
         }
 
+        /// <summary>
+        /// Both players go back to the level's own spawn point, not just back
+        /// to full health. Otherwise the winner keeps whatever height won them
+        /// the round, and starts the next one already standing over the loser -
+        /// the fight would only ever go one way after the first hit.
+        /// </summary>
         private static void StartNextRound(List<PlayerContext> contexts)
         {
             _winner = 0;
+            BattleProps.ResetAll();
+            SaveState spawn = SaveState.GetDefault();
+
             for (int i = 0; i < contexts.Count; i++)
             {
-                Fighter fighter = GetFighter(contexts[i]);
+                PlayerContext context = contexts[i];
+                Fighter fighter = GetFighter(context);
                 fighter.Health = MaxHealth;
                 fighter.Invulnerable = 0;
+                fighter.LastY = float.NaN;
+                fighter.Descended = false;
+
+                if (context.Body == null)
+                {
+                    continue;
+                }
+
+                // Each player goes back to their own start, the same one the
+                // level placed them at. Sending everyone to player 1's spawn
+                // stacked the whole field on one side after every round.
+                Vector2 position;
+                Vector2 velocity;
+                if (!MultiplayerStartPositions.TryGet(
+                        context.Number, out position, out velocity))
+                {
+                    position = spawn.position;
+                    velocity = spawn.velocity;
+                }
+
+                context.Body.Position = position;
+                context.Body.Velocity = velocity;
             }
         }
 
@@ -674,6 +919,33 @@ namespace LocalMultiplayerMod
             {
                 // A missing sound is not worth interrupting a round for.
             }
+        }
+
+        /// <summary>
+        /// The same click the ring and boots make when they go on. Picking
+        /// something up and equipping something are the same kind of event to
+        /// a player, so they sound alike.
+        /// </summary>
+        internal static void PlayPickupSound()
+        {
+            if (Game1.instance == null || Game1.instance.contentManager == null)
+            {
+                return;
+            }
+
+            try
+            {
+                Game1.instance.contentManager.audio.menu.OnItemToggle();
+            }
+            catch (Exception)
+            {
+            }
+        }
+
+        /// <summary>The game's own impact, shared with props so a hit sounds like a hit.</summary>
+        internal static void PlaySplatSound()
+        {
+            PlayHitSound();
         }
 
         private static void PlayHitSound()
@@ -752,7 +1024,7 @@ namespace LocalMultiplayerMod
         /// </summary>
         private static Color HealthColor(int health)
         {
-            if (health <= StompDamage)
+            if (health <= ImpactDamage(PlayerValues.MAX_FALL))
             {
                 return new Color(226, 62, 52);
             }
@@ -899,7 +1171,7 @@ namespace LocalMultiplayerMod
             }
         }
 
-        private static void Fill(
+        internal static void Fill(
             Texture2D pixel,
             int x,
             int y,

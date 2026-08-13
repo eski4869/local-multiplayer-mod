@@ -33,30 +33,119 @@ rules from `eski4869.LocalMultiplayerMod.Settings.xml`.
 `Battle: On` in the same menu turns the climb into a fight. Each king carries a
 health gauge above their head, and there are two ways to lose it.
 
-| Source | Damage | |
+**Damage is the energy of an impact** — the square of how fast you were falling,
+as a fraction of terminal velocity. One law covers both ways health is lost: a
+stomp hands the impact to whoever is underneath, a splat is the same impact
+absorbed by the player who made it. A full-speed landing therefore costs exactly
+what a full-speed stomp deals.
+
+Both read the speed actually landed at, never an assumed one. A splat is
+normally terminal velocity by definition — `FailState` only starts when
+`LastVelocity.Y` equals `MAX_FALL` exactly — but the node sits behind the player
+tree's `IsOnGround` guard, so a splatted player who leaves the ground has it
+suspended mid-run and `ResumeRun` calls `Start` again on landing without
+re-checking the speed. Charging terminal velocity there turned a half-pixel
+shove into a full-speed fall, which is what once let a downed player be walked
+to death. Reading the real speed makes that nudge worth the one point an impact
+that small is worth, and leaves a genuine fall at the twenty it always was.
+
+| Fall | Landing speed | Damage |
 | --- | --- | --- |
-| Landing on another player's head | 20 | Flattens them into the game's splat |
-| A splat landing | 12 | The game's own splat, so terminal velocity only |
+| 1 block | 2.0 | 1 |
+| 5 blocks | 4.5 | 4 |
+| 10 blocks | 6.4 | 8 |
+| 15 blocks | 7.9 | 12 |
+| 24 blocks (terminal) | 10.0 | 20 |
 
-Five clean stomps take a round. When someone runs out, the winner is announced
-for three seconds and everybody is healed to full — positions are left alone, so
-nobody loses the height they climbed.
+Five clean maximum-speed hits take a round — the only number here chosen by
+design rather than derived. When someone runs out, the winner is announced for
+three seconds, then everybody is healed and returned to the level's own spawn
+points, so a round is never won from the position the last one ended in.
 
-The two damage sources are meant to pull against each other. Getting above an
-opponent is the only way to land on them, so height is what wins fights; but a
-stomp that misses leaves you falling from that same height, and the splat at the
-bottom costs you health as well. A landed stomp cancels the fall, so the attack
-also saves you from the fall it created.
+Squared rather than linear is what settles the balance. Stepping off a ledge
+onto someone is worth almost nothing, so trading pokes on level ground can never
+win a round; getting above an opponent is the only thing that does. But a stomp
+that misses leaves you falling from that same height, and the landing costs you
+exactly what the hit would have been worth.
 
 A stomp puts the victim into the base game's splat: flattened, held there until
 they press something, and with their horizontal velocity zeroed. Being caught
-mid-jump therefore also costs the rest of that jump. The attacker rebounds at
-half the speed they arrived with, capped — the same restitution the game gives a
-wall, so dropping further bounces higher and stepping off a ledge barely hops.
+mid-jump therefore also costs the rest of that jump.
+
+The attacker rebounds with the same restitution the game gives a wall. Together
+with the recovery window that follows a hit, that decides how long a bounce
+chain runs: off a full-speed dive the first rebound stays airborne longer than
+the victim's splat lasts, so a second stomp connects — and the one after it does
+not. **A dive is worth exactly two hits**, and only from around fifteen blocks
+up, which is the height that makes the first rebound long enough.
 
 Nothing checks how fast the attacker was moving sideways, only that they were
 coming down and their feet reached the top of the other player. Diving in at an
 angle from a height is a stomp; arriving level is not.
+
+### Where the numbers come from
+
+Everything in the combat model is derived from constants the base game already
+defines, so there is nothing to re-tune when one of them changes:
+
+| | |
+| --- | --- |
+| Rebound off a head | `PlayerValues.BOUNCE` — a head returns what a wall does |
+| Side collision restitution | `PlayerValues.BOUNCE` — the same event, so the same share |
+| Recovery window after a hit | `SPLAT_TIME` — you cannot be hit again before the game lets you stand up |
+| Head band | `MAX_FALL` — one frame of terminal velocity, the smallest band that never misses a stomp |
+| Contact threshold | `WALK_SPEED` — below what a walking player brings, it is drift, not an impact |
+
+Two numbers are not derived, and both are honest about it: **five hits per
+round**, which is a design decision about round length, and the **lift a shove
+gives a standing player**, which exists only because `Walk` rewrites
+`Velocity.X` every frame a player is on the floor. A purely horizontal shove is
+erased before it moves anyone, so something has to lift them and no law says by
+how much. The lift scales with the impulse actually delivered — a running jump
+into someone knocks them further off their feet than a walk does — and the
+constant only fixes where that scale is anchored.
+
+### Props
+
+A map can place two kinds of object in the arena, in the `BattleProps` section
+of its `local_multiplayer.xml`:
+
+```xml
+<BattleProps>
+  <Heal>
+    <Position><X>228</X><Y>72</Y></Position>
+    <Amount>25</Amount>
+    <RespawnSeconds>20</RespawnSeconds>
+  </Heal>
+  <Walker>
+    <From><X>300</X><Y>352</Y></From>
+    <To><X>450</X><Y>352</Y></To>
+    <Speed>0.4</Speed>
+    <Damage>8</Damage>
+    <RespawnSeconds>10</RespawnSeconds>
+  </Walker>
+</BattleProps>
+```
+
+**Heal** restores health on contact and comes back after its respawn time. It
+declines to be taken by someone already at full health, so it is still there for
+whoever needs it. Worth placing somewhere that has to be climbed to: wanting it
+is then a reason to take on the fall risk, which is the same trade the rest of
+the fight runs on.
+
+**Walker** patrols between two points. Touching its sides costs health; landing
+on its head kills it until it respawns, using exactly the same head band that
+decides a stomp between two players — so nothing new has to be learned to deal
+with one. Slow on purpose, since the players sharing the arena are being driven
+through chat.
+
+The walker is also the answer to a stalemate. Two players who refuse to commit
+can hold their ground indefinitely against each other, but not against something
+that keeps arriving.
+
+Hazard damage goes through the same recovery window as a stomp, so a walker
+cannot drain someone who is already down, and cannot stack with a stomp landing
+in the same instant.
 
 ### Side contact
 
@@ -185,6 +274,60 @@ flag every frame. World state that all players genuinely share, such as whether
 a switch is currently on, is fine as a static.
 
 Use `GetPlayerState` / `SetPlayerState` for anything owned by one player.
+
+## Writing a multiplayer-friendly map
+
+Everything a map can tell this mod goes in **`local_multiplayer.xml`**, a file
+of its own next to `level_settings.xml`:
+
+```xml
+<?xml version="1.0"?>
+<LocalMultiplayerLevel xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <StartPositions>
+    <Player2>
+      <Position><X>151</X><Y>327</Y></Position>
+      <Velocity xsi:nil="true" />
+    </Player2>
+  </StartPositions>
+  <BattleProps>
+    <Heal>
+      <Position><X>228</X><Y>72</Y></Position>
+      <Amount>25</Amount>
+      <RespawnSeconds>20</RespawnSeconds>
+    </Heal>
+  </BattleProps>
+</LocalMultiplayerLevel>
+```
+
+**Do not put any of this in `level_settings.xml`.** Worldsmith round-trips that
+file through its own settings type when it saves, and silently drops every
+element it does not recognise — so anything written there works right up until
+the author next opens the editor, which is the worst possible way for it to
+disappear. A separate file is never rewritten.
+
+**The game reads the level's `bin` folder, not the project folder.** Worldsmith
+compiles the project into `bin` and the game is pointed at that, so a file it
+does not know about has to be copied there as well — a `local_multiplayer.xml`
+sitting only beside `level.png` is never read. Put it in both, or in `bin` and
+let the project copy be the source you edit.
+
+A map with no such file behaves exactly as it did before, so this is invisible
+to every existing level.
+
+### Start positions
+
+By default every additional player spawns exactly where player 1 does — the
+right behaviour for a map built as a single climb that multiplayer just races.
+`Player2` / `Player3` / `Player4` override that individually; player 1 keeps
+using the base game's own `StartData`.
+
+`Velocity` is optional, same as on `StartData` itself. Any player left without
+an entry falls back to player 1's spawn, so a two-player arena only needs
+`Player2`, and adding four-player support later means adding two more elements
+rather than restructuring anything.
+
+A spawn on a different screen from player 1 is fine: the camera for it is
+computed from the position the same way the base game's own teleports do it.
 
 ## Mod API
 
