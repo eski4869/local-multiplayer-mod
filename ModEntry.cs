@@ -839,6 +839,10 @@ namespace LocalMultiplayerMod
     /// player. Both are semicolon-separated mod names as they appear in
     /// <c>ModLoadLog.txt</c>, and both are normally empty: a mod qualifies by
     /// registering a block behaviour, which needs no configuration.
+    ///
+    /// These apply to <c>PlayerSetup.Mode = Replay</c> only. Cloning has no
+    /// qualification step - it reproduces every registration - so there is nothing
+    /// for an override to correct.
     /// </summary>
     public class LevelStartReplayPreferences
     {
