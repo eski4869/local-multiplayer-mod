@@ -235,7 +235,7 @@ namespace LocalMultiplayerMod
                 pending.Add(context);
             }
 
-            LevelStartReplay.Run(pending);
+            PlayerSetup.Run(pending);
         }
 
         private static PlayerContext CreatePrimaryContext()

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using EntityComponent;
 using HarmonyLib;
+using JumpKing.API;
 using JumpKing.MiscEntities.WorldItems;
 using JumpKing.MiscEntities.WorldItems.Inventory;
 using JumpKing.Player;
@@ -275,9 +276,21 @@ namespace LocalMultiplayerMod
     /// </summary>
     internal static class BodyCompRegisterBlockBehaviourPatch
     {
-        public static void Prefix()
+        public static void Prefix(
+            BodyComp __instance,
+            Type blockType,
+            IBlockBehaviour blockBehaviour
+        )
         {
             LevelStartReplay.NoteBlockBehaviourRegistration();
+
+            // Recorded regardless of which setup mechanism is selected. The
+            // recording is what the two mechanisms are compared against, so it
+            // must not be conditional on the one being used.
+            if (LevelStartReplay.IsBaseDispatch)
+            {
+                BlockBehaviourRecorder.Note(__instance, blockType, blockBehaviour);
+            }
         }
     }
 

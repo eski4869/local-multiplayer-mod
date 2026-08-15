@@ -120,6 +120,33 @@ namespace LocalMultiplayerMod
         }
 
         /// <summary>
+        /// Which mechanism gives the additional players their block behaviours.
+        /// An unrecognised value reads as <c>Replay</c>: a typo in a settings file
+        /// should leave the shipped behaviour in place, not silently select the one
+        /// still being proven.
+        /// </summary>
+        internal static PlayerSetupMode PlayerSetupMode
+        {
+            get
+            {
+                EnsurePreferencesLoaded();
+                string mode = _preferences.PlayerSetup.Mode;
+                return string.Equals(mode, "Clone", StringComparison.OrdinalIgnoreCase)
+                    ? LocalMultiplayerMod.PlayerSetupMode.Clone
+                    : LocalMultiplayerMod.PlayerSetupMode.Replay;
+            }
+        }
+
+        internal static bool WriteSetupManifest
+        {
+            get
+            {
+                EnsurePreferencesLoaded();
+                return _preferences.PlayerSetup.WriteManifest;
+            }
+        }
+
+        /// <summary>
         /// Decides whether a mod's <c>[OnLevelStart]</c> is replayed per player.
         ///
         /// The default answer is "only if it registered a block behaviour", which
@@ -747,9 +774,12 @@ namespace LocalMultiplayerMod
     ///
     /// The prefix creates every additional player first, because block mods look
     /// up "the player" inside that hook and register their behaviours on its body
-    /// - if the player does not exist yet, it never gets them. The postfix then
-    /// runs the same dispatch once per additional player so each one is set up by
-    /// the mod itself rather than by cloning the first player's behaviours.
+    /// - if the player does not exist yet, it never gets them. It also creates
+    /// player 1's context, which is what lets registrations be recorded as they
+    /// happen.
+    ///
+    /// The postfix then hands the additional players the same set, by whichever
+    /// mechanism <see cref="PlayerSetup"/> is configured for.
     /// </summary>
     internal static class ModLevelStartDispatchPatch
     {
@@ -780,6 +810,28 @@ namespace LocalMultiplayerMod
             new FourPlayerModePreferences();
         public LevelStartReplayPreferences LevelStartReplay { get; set; } =
             new LevelStartReplayPreferences();
+        public PlayerSetupPreferences PlayerSetup { get; set; } =
+            new PlayerSetupPreferences();
+    }
+
+    /// <summary>
+    /// How the additional players are given player 1's block behaviours, and
+    /// whether the result is written out for inspection.
+    /// </summary>
+    public class PlayerSetupPreferences
+    {
+        /// <summary>
+        /// <c>Replay</c> or <c>Clone</c>. Defaults to <c>Replay</c>, which is what
+        /// shipped. <c>Clone</c> runs no mod code and is expected to replace it,
+        /// once the two have been shown to produce the same manifest.
+        /// </summary>
+        public string Mode { get; set; } = "Replay";
+
+        /// <summary>
+        /// Write what each player's body actually holds to a text file beside the
+        /// settings. Off by default; the point of it is comparing two runs.
+        /// </summary>
+        public bool WriteManifest { get; set; } = false;
     }
 
     /// <summary>

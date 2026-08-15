@@ -58,6 +58,7 @@ namespace LocalMultiplayerMod
         public static void BeginBaseDispatch()
         {
             BlockBehaviourMods.Clear();
+            BlockBehaviourRecorder.Clear();
             _modAssemblies = null;
             IsBaseDispatch = true;
         }
