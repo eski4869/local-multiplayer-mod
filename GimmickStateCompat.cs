@@ -48,7 +48,7 @@ namespace LocalMultiplayerMod
         {
             new ScopedType
             {
-                TypeName = "SwitchBlocks.DataSand",
+                TypeName = "SwitchBlocks.Data.DataSand",
                 PlayerOwned = new[] { "HasSwitched", "HasEntered" },
                 LevelOwned = new[] { "State", "Progress", "ProgressUnclamped" }
             }
@@ -85,32 +85,43 @@ namespace LocalMultiplayerMod
                 )
             );
 
+            int patched = 0;
+
             for (int i = 0; i < Targets.Length; i++)
             {
                 ScopedType target = Targets[i];
                 Type type = FindType(target.TypeName);
                 if (type == null)
                 {
+                    // Silence here is how a typo in the type name became a layer
+                    // that installed nothing and reported nothing. A mod that is
+                    // simply not installed reaches the same branch, so the message
+                    // says which case it cannot tell apart rather than claiming a
+                    // fault.
+                    Missing.Add(target.TypeName + " (type not found)");
                     continue;
                 }
 
                 for (int j = 0; j < target.PlayerOwned.Length; j++)
                 {
-                    Patch(harmony, type, target.PlayerOwned[j], getter, setter);
+                    if (Patch(harmony, type, target.PlayerOwned[j], getter, setter))
+                    {
+                        patched++;
+                    }
                 }
             }
 
-            if (Missing.Count > 0)
-            {
-                JumpKing.Program.crashLog.AddErrorMessage(
-                    "Local Multiplayer could not scope gimmick state, so those " +
-                    "switches stay shared between players: " +
-                    string.Join(", ", Missing.ToArray())
-                );
-            }
+            JumpKing.Program.crashLog.AddErrorMessage(
+                "Local Multiplayer gimmick state: scoped " + patched +
+                " properties" +
+                (Missing.Count == 0
+                    ? "."
+                    : "; not scoped, so these stay shared between players: " +
+                        string.Join(", ", Missing.ToArray()))
+            );
         }
 
-        private static void Patch(
+        private static bool Patch(
             Harmony harmony,
             Type type,
             string propertyName,
@@ -126,7 +137,7 @@ namespace LocalMultiplayerMod
             if (property == null || property.PropertyType != typeof(bool))
             {
                 Missing.Add(type.Name + "." + propertyName);
-                return;
+                return false;
             }
 
             try
@@ -136,16 +147,18 @@ namespace LocalMultiplayerMod
                 if (get == null || set == null)
                 {
                     Missing.Add(type.Name + "." + propertyName);
-                    return;
+                    return false;
                 }
 
                 harmony.Patch(get, getter);
                 harmony.Patch(set, setter);
                 IsActive = true;
+                return true;
             }
             catch (Exception ex)
             {
                 Missing.Add(type.Name + "." + propertyName + " (" + ex.Message + ")");
+                return false;
             }
         }
 
