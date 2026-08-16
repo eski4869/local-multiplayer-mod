@@ -24,12 +24,48 @@ namespace LocalMultiplayerMod
     internal static class ScopedFieldStore
     {
         /// <summary>
-        /// Owners are singletons, so the type name identifies the instance and
-        /// makes the stored key readable when it is dumped.
+        /// Keyed on the owner's identity, not on its type name.
+        ///
+        /// These singletons are replaced rather than cleared - <c>DataSand.Reset</c>
+        /// sets the backing instance to null so the next access builds a fresh one,
+        /// and the fresh one may also have been loaded from the save file. A key
+        /// built from the type name would survive that and hand the new level the
+        /// previous run's values: a player who had entered the sand would still
+        /// count as inside it, the sand would not be solid for them, and they would
+        /// pass straight through.
+        ///
+        /// Identity keys make a replaced singleton read as unwritten, so the first
+        /// read falls through and seeds from whatever the new instance holds.
         /// </summary>
-        private static string KeyFor(object owner, string name)
+        private sealed class ScopedKey
         {
-            return owner.GetType().FullName + "." + name;
+            private readonly object _owner;
+            private readonly string _name;
+
+            public ScopedKey(object owner, string name)
+            {
+                _owner = owner;
+                _name = name;
+            }
+
+            public override bool Equals(object obj)
+            {
+                var other = obj as ScopedKey;
+                return other != null &&
+                    ReferenceEquals(_owner, other._owner) &&
+                    _name == other._name;
+            }
+
+            public override int GetHashCode()
+            {
+                return System.Runtime.CompilerServices.RuntimeHelpers
+                    .GetHashCode(_owner) ^ _name.GetHashCode();
+            }
+
+            public override string ToString()
+            {
+                return _owner.GetType().FullName + "." + _name;
+            }
         }
 
         /// <summary>
@@ -50,7 +86,7 @@ namespace LocalMultiplayerMod
                 return false;
             }
 
-            return context.State.TryGetValue(KeyFor(owner, name), out value);
+            return context.State.TryGetValue(new ScopedKey(owner, name), out value);
         }
 
         /// <summary>
@@ -65,7 +101,7 @@ namespace LocalMultiplayerMod
                 return false;
             }
 
-            context.State[KeyFor(owner, name)] = value;
+            context.State[new ScopedKey(owner, name)] = value;
             return true;
         }
     }
