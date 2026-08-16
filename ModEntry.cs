@@ -540,6 +540,11 @@ namespace LocalMultiplayerMod
                 "EndingManager.CheckWin"
             );
 
+            // After the base patches, and safe here because mod assemblies are
+            // loaded before [BeforeLevelLoad] runs: this one looks other mods up
+            // by name.
+            GimmickStateCompat.Install(harmony);
+
             _harmony = harmony;
             if (!complete)
             {

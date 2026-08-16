@@ -71,7 +71,9 @@
 		<Compile Include="ObjectCopier.cs" />
 		<Compile Include="MultiplayerStartPositions.cs" />
 		<Compile Include="PlayerContext.cs" />
+		<Compile Include="GimmickStateCompat.cs" />
 		<Compile Include="PlayerScope.cs" />
+		<Compile Include="ScopedFieldStore.cs" />
 		<Compile Include="PlayerSetup.cs" />
 		<Compile Include="PlayerSetupManifest.cs" />
 		<Compile Include="PlayerSkinComposer.cs" />
