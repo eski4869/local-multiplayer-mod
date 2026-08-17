@@ -30,11 +30,28 @@ namespace LocalMultiplayerMod
         {
             public string TypeName;
 
-            /// <summary>Per-player in every mode.</summary>
+            /// <summary>
+            /// Per-player, and only ever read from inside a player's own pass.
+            /// Outside a scope the mod's own field answers.
+            /// </summary>
             public string[] PlayerOwned;
+
+            /// <summary>
+            /// Per-player, but also read from outside any player - by a logic
+            /// entity deciding something for the level as a whole. Those reads
+            /// get every player's value combined with AND, which is what
+            /// "is it safe" means once there is more than one of them.
+            /// </summary>
+            public string[] PlayerOwnedCombined;
 
             /// <summary>Per-player only when worlds are independent.</summary>
             public string[] LevelOwned;
+
+            /// <summary>
+            /// The members are static rather than instance. The type itself
+            /// stands in for the owner, since there is no instance to key on.
+            /// </summary>
+            public bool Static;
         }
 
         /// <summary>
@@ -50,11 +67,76 @@ namespace LocalMultiplayerMod
             {
                 TypeName = "SwitchBlocks.Data.DataSand",
                 PlayerOwned = new[] { "HasSwitched", "HasEntered" },
+                PlayerOwnedCombined = new string[0],
                 LevelOwned = new[] { "State", "Progress", "ProgressUnclamped" }
+            },
+
+            // Auto, Countdown and Jump share one protocol, and the mod applies it
+            // to all three in the same two places: BehaviourPre sets
+            // CanSwitchSafely at the start of a player's block pass, and the slope
+            // patch clears it when that player is standing where a switch would
+            // trap them. Both are per player. Their logic entities then read it
+            // once a frame from outside any player, which is the combined read.
+            new ScopedType
+            {
+                TypeName = "SwitchBlocks.Data.DataCountdown",
+                PlayerOwned = new[] { "HasSwitched" },
+                PlayerOwnedCombined = new[] { "CanSwitchSafely" },
+                LevelOwned = new[] { "State", "Progress", "ProgressUnclamped" }
+            },
+            new ScopedType
+            {
+                TypeName = "SwitchBlocks.Data.DataAuto",
+                PlayerOwned = new[] { "HasSwitched" },
+                PlayerOwnedCombined = new[] { "CanSwitchSafely" },
+                LevelOwned = new[] { "State", "Progress", "ProgressUnclamped" }
+            },
+            new ScopedType
+            {
+                TypeName = "SwitchBlocks.Data.DataJump",
+                PlayerOwned = new[] { "HasSwitched" },
+                PlayerOwnedCombined = new[] { "CanSwitchSafely" },
+                LevelOwned = new[] { "State", "Progress", "ProgressUnclamped" }
+            },
+
+            // Eight statics describing one player, on a behaviour that is
+            // registered per body. BehaviourPre clears them at the start of a
+            // player's pass and that player's collisions set them, so with two
+            // players the second pass overwrites the first and both then read
+            // whichever finished last.
+            //
+            // PrevVelocity is the one that shows: the lever asks which side it
+            // was struck from by looking at the velocity from the previous
+            // frame, and with the wrong player's velocity a ceiling struck from
+            // below does not read as struck from below, so the lever never fires.
+            new ScopedType
+            {
+                TypeName = "SwitchBlocks.Behaviours.Dummy.BehaviourPost",
+                Static = true,
+                PlayerOwned = new[]
+                {
+                    "PrevVelocity",
+                    "IsPlayerOnIce",
+                    "IsPlayerOnSnow",
+                    "IsPlayerOnWater",
+                    "IsPlayerOnTypeSand",
+                    "IsPlayerOnTypeSandUp",
+                    "IsPlayerOnMoveUp",
+                    "IsPlayerOnInfinityJump"
+                },
+                PlayerOwnedCombined = new string[0],
+                LevelOwned = new string[0]
             }
         };
 
         private static readonly List<string> Missing = new List<string>();
+
+        /// <summary>
+        /// Type-qualified names whose out-of-scope reads combine every player's
+        /// value rather than falling through to the mod's own field.
+        /// </summary>
+        private static readonly HashSet<string> Combined = new HashSet<string>();
+
         private static bool _installed;
 
         public static bool IsActive { get; private set; }
@@ -109,6 +191,16 @@ namespace LocalMultiplayerMod
                         patched++;
                     }
                 }
+
+                for (int j = 0; j < target.PlayerOwnedCombined.Length; j++)
+                {
+                    string name = target.PlayerOwnedCombined[j];
+                    Combined.Add(type.FullName + "." + name);
+                    if (Patch(harmony, type, name, getter, setter))
+                    {
+                        patched++;
+                    }
+                }
             }
 
             JumpKing.Program.crashLog.AddErrorMessage(
@@ -131,12 +223,36 @@ namespace LocalMultiplayerMod
         {
             PropertyInfo property = type.GetProperty(
                 propertyName,
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
+                BindingFlags.Public | BindingFlags.NonPublic |
+                BindingFlags.Instance | BindingFlags.Static
             );
 
-            if (property == null || property.PropertyType != typeof(bool))
+            if (property == null)
             {
                 Missing.Add(type.Name + "." + propertyName);
+                return false;
+            }
+
+            // One prefix pair per property type: Harmony's __result has to be
+            // declared as the real return type, so bool and Vector2 cannot share.
+            HarmonyMethod typedGetter;
+            HarmonyMethod typedSetter;
+            if (property.PropertyType == typeof(bool))
+            {
+                typedGetter = getter;
+                typedSetter = setter;
+            }
+            else if (property.PropertyType == typeof(Microsoft.Xna.Framework.Vector2))
+            {
+                typedGetter = Method("VectorGetterPrefix");
+                typedSetter = Method("VectorSetterPrefix");
+            }
+            else
+            {
+                Missing.Add(
+                    type.Name + "." + propertyName +
+                    " (" + property.PropertyType.Name + " not handled)"
+                );
                 return false;
             }
 
@@ -150,8 +266,8 @@ namespace LocalMultiplayerMod
                     return false;
                 }
 
-                harmony.Patch(get, getter);
-                harmony.Patch(set, setter);
+                harmony.Patch(get, typedGetter);
+                harmony.Patch(set, typedSetter);
                 IsActive = true;
                 return true;
             }
@@ -192,15 +308,36 @@ namespace LocalMultiplayerMod
         /// Returning true lets the mod's own accessor run, which is what happens
         /// in single player and on a player's first read.
         /// </summary>
-        private static bool BoolGetterPrefix(
+        /// <summary>
+        /// A static member has no instance to key on, so its declaring type
+        /// stands in as the owner. Instance members key on the instance, which is
+        /// what keeps a replaced singleton from inheriting the previous one's
+        /// values.
+        /// </summary>
+        private static object OwnerOf(object instance, MethodBase accessor)
+        {
+            return instance ?? accessor.DeclaringType;
+        }
+
+        private static HarmonyMethod Method(string name)
+        {
+            return new HarmonyMethod(
+                typeof(GimmickStateCompat).GetMethod(
+                    name,
+                    BindingFlags.NonPublic | BindingFlags.Static
+                )
+            );
+        }
+
+        private static bool VectorGetterPrefix(
             object __instance,
-            ref bool __result,
+            ref Microsoft.Xna.Framework.Vector2 __result,
             MethodBase __originalMethod
         )
         {
             object value;
             if (!ScopedFieldStore.TryRead(
-                __instance,
+                OwnerOf(__instance, __originalMethod),
                 PropertyNameOf(__originalMethod),
                 out value
             ))
@@ -208,8 +345,56 @@ namespace LocalMultiplayerMod
                 return true;
             }
 
-            __result = (bool)value;
+            __result = (Microsoft.Xna.Framework.Vector2)value;
             return false;
+        }
+
+        private static bool VectorSetterPrefix(
+            object __instance,
+            Microsoft.Xna.Framework.Vector2 value,
+            MethodBase __originalMethod
+        )
+        {
+            return !ScopedFieldStore.TryWrite(
+                OwnerOf(__instance, __originalMethod),
+                PropertyNameOf(__originalMethod),
+                value
+            );
+        }
+
+        private static bool BoolGetterPrefix(
+            object __instance,
+            ref bool __result,
+            MethodBase __originalMethod
+        )
+        {
+            string name = PropertyNameOf(__originalMethod);
+            object owner = OwnerOf(__instance, __originalMethod);
+
+            object value;
+            if (ScopedFieldStore.TryRead(owner, name, out value))
+            {
+                __result = (bool)value;
+                return false;
+            }
+
+            // No player is being processed. For a value the mod consults on
+            // behalf of the whole level, answer for all of them at once.
+            Type declaring = __instance == null
+                ? __originalMethod.DeclaringType
+                : __instance.GetType();
+
+            if (Combined.Contains(declaring.FullName + "." + name))
+            {
+                bool all;
+                if (ScopedFieldStore.TryReadAll(owner, name, out all))
+                {
+                    __result = all;
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         private static bool BoolSetterPrefix(
@@ -219,7 +404,7 @@ namespace LocalMultiplayerMod
         )
         {
             return !ScopedFieldStore.TryWrite(
-                __instance,
+                OwnerOf(__instance, __originalMethod),
                 PropertyNameOf(__originalMethod),
                 value
             );

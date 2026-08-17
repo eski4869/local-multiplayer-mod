@@ -24,7 +24,7 @@ namespace LocalMultiplayerMod
     /// </summary>
     internal static class MultiplayerRuntime
     {
-        private const int MaximumPlayers = 4;
+        internal const int MaximumPlayers = 4;
 
         private static readonly PlayerContext[] Contexts =
             new PlayerContext[MaximumPlayers];
@@ -132,13 +132,28 @@ namespace LocalMultiplayerMod
         {
             _levelStarted = true;
             _raceComplete = false;
+
+            // Nothing here has a reason to run before the mod dispatch when there
+            // is one player, and running it anyway was not free: it moved the
+            // player's entity registration ahead of every entity the block mods
+            // create in their own hook. Entity order is draw order, so the player
+            // ended up behind SwitchBlocks' platforms and vanished inside the
+            // sand. Measured: player at 1859 with this running, 2180 without,
+            // against switch platforms starting at 1859.
+            //
+            // Single player is left exactly as the base game orders it, and the
+            // guarantee is structural - this is not reached at all rather than
+            // reached and found to have nothing to do. The [OnLevelStart] hook
+            // still builds the context afterwards, which is where it came from
+            // before multiplayer existed.
+            if (!ModEntry.IsMultiplayerEnabled)
+            {
+                return;
+            }
+
             MultiplayerStartPositions.Reset();
             Contexts[0] = CreatePrimaryContext();
-
-            if (ModEntry.IsMultiplayerEnabled)
-            {
-                StartAdditionalPlayers(ModEntry.PlayerCount);
-            }
+            StartAdditionalPlayers(ModEntry.PlayerCount);
         }
 
         /// <summary>
@@ -148,6 +163,61 @@ namespace LocalMultiplayerMod
         public static void AfterModLevelStart()
         {
             ReplayForAdditionalPlayers();
+            RaisePlayersAboveLevelStartEntities();
+        }
+
+        /// <summary>
+        /// Puts the players back on top of everything the mod dispatch created.
+        ///
+        /// Entity order is draw order and later is nearer the viewer;
+        /// <c>MoveToFront</c> moves an entity to the end of the list, and the base
+        /// game never applies it to a player. A player's depth is therefore
+        /// decided by nothing but when it was registered.
+        ///
+        /// Gimmick mods create their world entities inside <c>[OnLevelStart]</c>
+        /// and raise them - SwitchBlocks does this to all of its platforms. So any
+        /// player that already existed when the dispatch ran ends up underneath
+        /// them and disappears inside the sand. On a first load the base game gets
+        /// away with it because the player is registered after the dispatch; on a
+        /// restart the player survives from the previous attempt and is not, which
+        /// is why the same fault is reachable without this mod at all.
+        ///
+        /// This mod makes it certain rather than occasional, because guaranteeing
+        /// the players exist before the dispatch is exactly what its prefix is for.
+        /// Raising them again afterwards restores the depth a first load produces,
+        /// which is what every map was authored against.
+        ///
+        /// Runs for one player as well as several: the ordering has nothing to do
+        /// with how many there are, and single player is where the fault was
+        /// actually reported.
+        /// </summary>
+        private static void RaisePlayersAboveLevelStartEntities()
+        {
+            for (int number = 1; number <= MaximumPlayers; number++)
+            {
+                PlayerContext context = Contexts[number - 1];
+                if (context != null && context.IsAlive)
+                {
+                    context.Player.GoToFront();
+                }
+            }
+
+            // Single player keeps no context of its own until the [OnLevelStart]
+            // hook builds one, and the fault is reported there, so the player is
+            // raised directly rather than through a context that does not exist
+            // yet.
+            if (Contexts[0] == null || !Contexts[0].IsAlive)
+            {
+                EntityManager manager = EntityManager.instance;
+                PlayerEntity player = manager == null
+                    ? null
+                    : manager.Find<PlayerEntity>();
+
+                if (player != null)
+                {
+                    player.GoToFront();
+                }
+            }
         }
 
         public static void OnLevelStart()

@@ -31,6 +31,13 @@ namespace LocalMultiplayerMod
             public IBlockBehaviour Behaviour;
 
             /// <summary>
+            /// The body it was registered on. Kept so the recorder needs no
+            /// player context while the dispatch is running, which is what lets
+            /// single player skip context creation entirely.
+            /// </summary>
+            public BodyComp Body;
+
+            /// <summary>
             /// Taken from the behaviour's own type, not from a stack walk. The
             /// replay had to identify the calling mod to decide whether to re-run
             /// it; copying an object needs no such decision, so the walk - and its
@@ -83,21 +90,20 @@ namespace LocalMultiplayerMod
             IBlockBehaviour behaviour
         )
         {
-            if (blockType == null || behaviour == null)
+            if (blockType == null || behaviour == null || body == null)
             {
                 return;
             }
 
-            PlayerContext primary = MultiplayerRuntime.GetContext(1);
-            if (primary == null || primary.Body != body)
-            {
-                return;
-            }
-
+            // Recorded without consulting a player context. Whether this body is
+            // the one that matters is decided later, when there is a context to
+            // ask - a record must not be gated on the state at the time it is
+            // taken, which is the mistake v1.2.2 shipped.
             Records.Add(new Registration
             {
                 BlockType = blockType,
-                Behaviour = behaviour
+                Behaviour = behaviour,
+                Body = body
             });
         }
     }

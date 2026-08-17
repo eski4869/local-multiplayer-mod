@@ -567,6 +567,7 @@ namespace LocalMultiplayerMod
             string description
         )
         {
+
             if (target == null)
             {
                 JumpKing.Program.crashLog.AddErrorMessage(

@@ -90,6 +90,74 @@ namespace LocalMultiplayerMod
         }
 
         /// <summary>
+        /// One named player's copy, for reporting. The normal read path goes
+        /// through the ambient scope; this exists so a diagnostic can show what
+        /// each player is contributing without entering their scope.
+        /// </summary>
+        public static bool TryReadFor(
+            PlayerContext context,
+            object owner,
+            string name,
+            out object value
+        )
+        {
+            value = null;
+            if (context == null || owner == null)
+            {
+                return false;
+            }
+
+            return context.State.TryGetValue(new ScopedKey(owner, name), out value);
+        }
+
+        /// <summary>
+        /// Combines every player's copy with AND, for a value that is read from
+        /// outside any player scope.
+        ///
+        /// Some of this state is written per player but consulted globally.
+        /// SwitchBlocks resets <c>CanSwitchSafely</c> at the start of each
+        /// player's block pass and clears it if that player is standing where a
+        /// switch would trap them, then its logic entity reads it once per frame
+        /// to decide whether the switch may flip. With one player those are the
+        /// same question. With several, the honest reading of "is it safe to
+        /// switch" is **safe for everyone**, so the values combine rather than
+        /// one of them winning.
+        ///
+        /// False when no player has written one yet, in which case the caller
+        /// must let the mod's own accessor run and answer from its own field.
+        /// </summary>
+        public static bool TryReadAll(object owner, string name, out bool combined)
+        {
+            combined = true;
+
+            if (owner == null)
+            {
+                return false;
+            }
+
+            bool any = false;
+            for (int number = 1; number <= MultiplayerRuntime.MaximumPlayers; number++)
+            {
+                PlayerContext context = MultiplayerRuntime.GetContext(number);
+                if (context == null || !context.IsAlive)
+                {
+                    continue;
+                }
+
+                object value;
+                if (!context.State.TryGetValue(new ScopedKey(owner, name), out value))
+                {
+                    continue;
+                }
+
+                any = true;
+                combined = combined && (bool)value;
+            }
+
+            return any;
+        }
+
+        /// <summary>
         /// False when there is no player to write for, in which case the caller
         /// must let the mod's own accessor run.
         /// </summary>

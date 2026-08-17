@@ -84,9 +84,19 @@ namespace LocalMultiplayerMod
             // and the copies have to share in the same shape.
             IDictionary<object, object> identityMap = BehaviourCloner.NewIdentityMap();
 
+            PlayerContext primary = MultiplayerRuntime.GetContext(1);
+
             for (int i = 0; i < records.Count; i++)
             {
                 BlockBehaviourRecorder.Registration record = records[i];
+
+                // Which body mattered is decided here rather than while recording,
+                // so the dispatch needs no player context and single player can
+                // skip creating one.
+                if (primary == null || record.Body != primary.Body)
+                {
+                    continue;
+                }
 
                 string problem;
                 var clone = BehaviourCloner.Clone(
