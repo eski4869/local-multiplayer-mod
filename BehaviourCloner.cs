@@ -74,7 +74,11 @@ namespace LocalMultiplayerMod
                 _target = target;
             }
 
-            public bool TryRebind(object value, out object replacement)
+            public bool TryRebind(
+                FieldInfo field,
+                object value,
+                out object replacement
+            )
             {
                 if (value is PlayerEntity)
                 {
@@ -85,6 +89,16 @@ namespace LocalMultiplayerMod
                 if (value is BodyComp)
                 {
                     replacement = _target.Body;
+                    return true;
+                }
+
+                if (GimmickStateCompat.TryRebindCloneField(
+                    field,
+                    value,
+                    _target,
+                    out replacement
+                ))
+                {
                     return true;
                 }
 

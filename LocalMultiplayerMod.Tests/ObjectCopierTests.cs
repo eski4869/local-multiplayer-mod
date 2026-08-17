@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Reflection;
 using LocalMultiplayerMod;
 
 namespace LocalMultiplayerMod.Tests
@@ -62,6 +63,12 @@ namespace LocalMultiplayerMod.Tests
             public int Value;
         }
 
+        private class TwoReferences
+        {
+            public Marker PlayerOwned;
+            public Marker Shared;
+        }
+
         /// <summary>Swaps any Marker owned by "one" for the target's own.</summary>
         private sealed class SwapOwner : ObjectCopier.IFieldPolicy
         {
@@ -72,7 +79,11 @@ namespace LocalMultiplayerMod.Tests
                 _replacement = replacement;
             }
 
-            public bool TryRebind(object value, out object replacement)
+            public bool TryRebind(
+                FieldInfo field,
+                object value,
+                out object replacement
+            )
             {
                 var marker = value as Marker;
                 if (marker != null && marker.Owner == "one")
@@ -169,6 +180,28 @@ namespace LocalMultiplayerMod.Tests
         }
 
         [TestMethod]
+        public void PolicyCanRebindOneFieldWithoutRebindingAnEqualReference()
+        {
+            var originalValue = new Marker { Owner = "shared" };
+            var replacement = new Marker { Owner = "two" };
+            var original = new TwoReferences
+            {
+                PlayerOwned = originalValue,
+                Shared = originalValue
+            };
+
+            var copy = (TwoReferences)Copy(
+                original,
+                new SwapNamedField("PlayerOwned", replacement),
+                null,
+                null
+            );
+
+            Assert.AreSame(replacement, copy.PlayerOwned);
+            Assert.AreSame(originalValue, copy.Shared);
+        }
+
+        [TestMethod]
         public void KeepsSharedInstancesSharedWithinOneMap()
         {
             var shared = new Behaviour(new Marker { Owner = "one" }, 1);
@@ -227,13 +260,17 @@ namespace LocalMultiplayerMod.Tests
 
             Copy(original, new FlagEverything(), null, notes);
 
-            Assert.IsTrue(notes.Count > 0);
+            Assert.IsNotEmpty(notes);
             CollectionAssert.Contains(notes, "Bound (suspicious)");
         }
 
         private sealed class FlagEverything : ObjectCopier.IFieldPolicy
         {
-            public bool TryRebind(object value, out object replacement)
+            public bool TryRebind(
+                FieldInfo field,
+                object value,
+                out object replacement
+            )
             {
                 replacement = null;
                 return false;
@@ -242,6 +279,39 @@ namespace LocalMultiplayerMod.Tests
             public string Inspect(object value)
             {
                 return value is Marker ? "suspicious" : null;
+            }
+        }
+
+        private sealed class SwapNamedField : ObjectCopier.IFieldPolicy
+        {
+            private readonly string _fieldName;
+            private readonly object _replacement;
+
+            public SwapNamedField(string fieldName, object replacement)
+            {
+                _fieldName = fieldName;
+                _replacement = replacement;
+            }
+
+            public bool TryRebind(
+                FieldInfo field,
+                object value,
+                out object replacement
+            )
+            {
+                if (field.Name == _fieldName)
+                {
+                    replacement = _replacement;
+                    return true;
+                }
+
+                replacement = null;
+                return false;
+            }
+
+            public string Inspect(object value)
+            {
+                return null;
             }
         }
     }

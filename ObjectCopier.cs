@@ -31,7 +31,11 @@ namespace LocalMultiplayerMod
             /// True when <paramref name="replacement"/> should be stored instead of
             /// the original value.
             /// </summary>
-            bool TryRebind(object value, out object replacement);
+            bool TryRebind(
+                FieldInfo field,
+                object value,
+                out object replacement
+            );
 
             /// <summary>
             /// A note when a value was copied as-is but probably should not have
@@ -111,7 +115,7 @@ namespace LocalMultiplayerMod
             object toStore = value;
             object alreadyCopied;
 
-            if (policy != null && policy.TryRebind(value, out toStore))
+            if (policy != null && policy.TryRebind(field, value, out toStore))
             {
                 // Claimed by the caller: a player reference becomes the target's.
             }

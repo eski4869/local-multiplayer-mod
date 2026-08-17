@@ -172,5 +172,78 @@ namespace LocalMultiplayerMod
             context.State[new ScopedKey(owner, name)] = value;
             return true;
         }
+
+        /// <summary>
+        /// Returns a player's private copy of a mutable set. Value properties can
+        /// fall through to the source singleton on their first read; a collection
+        /// cannot, because mutating that returned reference would mutate every
+        /// player at once.
+        /// </summary>
+        public static bool TryGetOrCreateIntSet(
+            object owner,
+            string name,
+            HashSet<int> source,
+            out HashSet<int> value
+        )
+        {
+            value = null;
+            PlayerContext context = PlayerScope.Current;
+            return context != null && TryGetOrCreateIntSetFor(
+                context,
+                owner,
+                name,
+                source,
+                out value
+            );
+        }
+
+        public static bool TryGetOrCreateIntSetFor(
+            PlayerContext context,
+            object owner,
+            string name,
+            HashSet<int> source,
+            out HashSet<int> value
+        )
+        {
+            value = null;
+            if (context == null || owner == null)
+            {
+                return false;
+            }
+
+            var key = new ScopedKey(owner, name);
+            object stored;
+            if (context.State.TryGetValue(key, out stored))
+            {
+                value = (HashSet<int>)stored;
+                return true;
+            }
+
+            value = source == null
+                ? new HashSet<int>()
+                : new HashSet<int>(source);
+            context.State[key] = value;
+            return true;
+        }
+
+        /// <summary>Seeds a value before the player's first scoped read.</summary>
+        public static void SeedFor(
+            PlayerContext context,
+            object owner,
+            string name,
+            object value
+        )
+        {
+            if (context == null || owner == null)
+            {
+                return;
+            }
+
+            var key = new ScopedKey(owner, name);
+            if (!context.State.ContainsKey(key))
+            {
+                context.State[key] = value;
+            }
+        }
     }
 }
