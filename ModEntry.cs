@@ -147,6 +147,20 @@ namespace LocalMultiplayerMod
         }
 
         /// <summary>
+        /// The diagnostic probes, each off unless the settings file asks for it.
+        /// Read through here rather than from the probes themselves so they stay
+        /// free of settings plumbing and can be deleted in one piece.
+        /// </summary>
+        internal static DiagnosticsPreferences Diagnostics
+        {
+            get
+            {
+                EnsurePreferencesLoaded();
+                return _preferences.Diagnostics;
+            }
+        }
+
+        /// <summary>
         /// Decides whether a mod's <c>[OnLevelStart]</c> is replayed per player.
         ///
         /// The default answer is "only if it registered a block behaviour", which
@@ -553,6 +567,7 @@ namespace LocalMultiplayerMod
             // loaded before [BeforeLevelLoad] runs: this one looks other mods up
             // by name.
             GimmickStateCompat.Install(harmony);
+            TeleportProbe.Install(harmony);
 
             _harmony = harmony;
             if (!complete)
@@ -754,6 +769,13 @@ namespace LocalMultiplayerMod
             {
                 preferences.LevelStartReplay = new LevelStartReplayPreferences();
             }
+
+            // A settings file written before this section existed has no
+            // Diagnostics element, and every probe reads through it.
+            if (preferences.Diagnostics == null)
+            {
+                preferences.Diagnostics = new DiagnosticsPreferences();
+            }
         }
 
         private static void SavePreferences()
@@ -781,6 +803,17 @@ namespace LocalMultiplayerMod
         {
             PlayerScope.ResetIfLeaked();
             ModEntry.ProcessBrokerCommand();
+
+            if (MultiplayerRuntime.IsActive)
+            {
+                for (int number = 1; number <= MultiplayerRuntime.PlayerCount; number++)
+                {
+                    ScreenTrackingProbe.Sample(
+                        number,
+                        MultiplayerRuntime.GetContext(number)
+                    );
+                }
+            }
         }
     }
 
@@ -827,6 +860,50 @@ namespace LocalMultiplayerMod
             new LevelStartReplayPreferences();
         public PlayerSetupPreferences PlayerSetup { get; set; } =
             new PlayerSetupPreferences();
+        public DiagnosticsPreferences Diagnostics { get; set; } =
+            new DiagnosticsPreferences();
+    }
+
+    /// <summary>
+    /// The probes. Each answers one question about a mechanism that cannot be
+    /// inspected from outside the running game, and each is silent unless asked
+    /// for.
+    ///
+    /// They stay in the build rather than being added when a symptom appears,
+    /// because the symptoms that need them are the ones that are hard to
+    /// reproduce on demand - by the time a probe has been written, compiled and
+    /// deployed, the run that showed the fault is gone. Shipping them switched
+    /// off costs one boolean read per sample.
+    ///
+    /// Off by default, and deliberately not exposed in the pause menu: these
+    /// write to the crash log every time their answer changes, which is a
+    /// developer's tool and not a player's setting.
+    /// </summary>
+    public class DiagnosticsPreferences
+    {
+        /// <summary>
+        /// Whether <c>PlayerContext.Screen</c> - the screen collision resolves
+        /// against for a player who is not the global camera - has drifted from
+        /// the screen that player's own position falls on.
+        ///
+        /// <c>GetCollisionInfo</c> only searches the tracked screen plus or minus
+        /// one, so a drift of two or more means no ground is found at all. That
+        /// reads in play as a player falling through the world.
+        /// </summary>
+        public bool ScreenTracking { get; set; } = false;
+
+        /// <summary>
+        /// What the base game's screen teleport resolves, per player, at the
+        /// moment it fires: the camera's screen, the screen the body is really
+        /// on, the teleport links found, and the move that resulted.
+        /// </summary>
+        public bool Teleport { get; set; } = false;
+
+        /// <summary>
+        /// What the upside-down gravity resync produced, so a fix that is broken
+        /// and a fix that never installed can be told apart.
+        /// </summary>
+        public bool UpsideDown { get; set; } = false;
     }
 
     /// <summary>

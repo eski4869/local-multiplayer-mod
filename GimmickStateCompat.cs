@@ -788,6 +788,82 @@ namespace LocalMultiplayerMod
             }
         }
 
+        private static Func<bool> _readIsReverseGravity;
+        private static Func<object> _readUpsideDownType;
+        private static Func<bool> _readManagerIsReverseGravity;
+
+        /// <summary>
+        /// True once binding has been attempted, success or failure. Without
+        /// this, a map that never loads UpsideDownCore made every frame, for
+        /// every player, re-scan every loaded assembly by reflection looking for
+        /// a type that was never going to appear - cheap to describe, and heavy
+        /// enough in practice to be indistinguishable from a hang.
+        /// </summary>
+        private static bool _upsideDownDescribeBound;
+        private static string _upsideDownDescribeFailure;
+
+        /// <summary>
+        /// Diagnostic only. Reads exactly what ApplyGravityBehaviour would see at
+        /// this instant, through the same patched accessors, plus Manager's own
+        /// field directly (unpatched, since it is a field not a property) so a
+        /// resync failure and a read failure can be told apart.
+        /// </summary>
+        public static string DescribeUpsideDownState()
+        {
+            if (!_upsideDownDescribeBound)
+            {
+                _upsideDownDescribeBound = true;
+
+                Type controllerType = FindType("UpsideDownCore.Controller");
+                Type managerType = FindType("UpsideDownCore.Models.Manager");
+                if (controllerType == null || managerType == null)
+                {
+                    _upsideDownDescribeFailure = "controller/manager type not found";
+                }
+                else
+                {
+                    try
+                    {
+                        _readIsReverseGravity = CompileStaticGetter<bool>(
+                            controllerType,
+                            "isReverseGravity"
+                        );
+                        _readUpsideDownType =
+                            CompileStaticObjectGetter(controllerType, "upsideDownType");
+                        _readManagerIsReverseGravity = CompileStaticFieldGetter<bool>(
+                            managerType,
+                            "isReverseGravity"
+                        );
+                    }
+                    catch (Exception ex)
+                    {
+                        _upsideDownDescribeFailure = "bind failed: " + ex.Message;
+                    }
+                }
+            }
+
+            if (_upsideDownDescribeFailure != null)
+            {
+                return _upsideDownDescribeFailure;
+            }
+
+            return "Controller.isReverseGravity=" + _readIsReverseGravity() +
+                " Controller.upsideDownType=" + _readUpsideDownType() +
+                " Manager.isReverseGravity=" + _readManagerIsReverseGravity() +
+                " scope=" + (PlayerScope.Current == null
+                    ? "none"
+                    : PlayerScope.Current.Number.ToString());
+        }
+
+        private static Func<T> CompileStaticFieldGetter<T>(Type type, string fieldName)
+        {
+            FieldInfo field = type.GetField(
+                fieldName,
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static
+            );
+            return Expression.Lambda<Func<T>>(Expression.Field(null, field)).Compile();
+        }
+
         private static Type FindType(string fullName)
         {
             Assembly[] assemblies = AppDomain.CurrentDomain.GetAssemblies();

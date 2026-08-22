@@ -271,6 +271,12 @@ time from `GimmickStateCompat`, without modifying the mod: the patterns, and the
 rules for adding one, are in
 [third-party compatibility](docs/third-party-compatibility.md).
 
+### When something is wrong and the cause is not visible
+
+The mod ships with diagnostic probes, all switched off. Turn one on in the
+settings file, reproduce, and read `crashlog.log` — no rebuild. What each one
+answers, and the rules for writing another, are in [probes](docs/probes.md).
+
 ## Writing a multiplayer-friendly mod
 
 Consumer mods should stay multiplayer-agnostic: resolve a user to one
