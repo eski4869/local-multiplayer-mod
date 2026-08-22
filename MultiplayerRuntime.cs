@@ -284,6 +284,38 @@ namespace LocalMultiplayerMod
             return result;
         }
 
+        /// <summary>
+        /// Teleports <paramref name="moverNumber"/> onto <paramref name="targetNumber"/>'s
+        /// position. Both players must be active; a missing player or a player
+        /// gathering onto itself is a no-op.
+        ///
+        /// Screen/offset/seeded are copied alongside the body position rather than
+        /// left for the mover's own <c>CameraFollowComp</c> to catch up next frame -
+        /// the same inheritance an additional player without its own spawn gets
+        /// from player 1 on creation.
+        /// </summary>
+        public static void GatherPlayer(int moverNumber, int targetNumber)
+        {
+            if (moverNumber == targetNumber)
+            {
+                return;
+            }
+
+            PlayerContext mover = GetContext(moverNumber);
+            PlayerContext target = GetContext(targetNumber);
+            if (mover == null || !mover.IsAlive ||
+                target == null || !target.IsAlive)
+            {
+                return;
+            }
+
+            mover.Body.Position = target.Body.Position;
+            mover.Body.Velocity = Vector2.Zero;
+            mover.Screen = target.Screen;
+            mover.Offset = target.Offset;
+            mover.CameraSeeded = target.CameraSeeded;
+        }
+
         private static void ReplayForAdditionalPlayers()
         {
             if (!ModEntry.IsMultiplayerEnabled)
@@ -508,6 +540,14 @@ namespace LocalMultiplayerMod
             if (context != null)
             {
                 __state = PlayerScope.Enter(context);
+
+                // UpsideDownCore snapshots gravity direction from Controller into
+                // its own fields once per game tick, before any player's physics
+                // runs. Refreshing that snapshot right after installing this
+                // player's scope makes it read this player's own gravity state
+                // rather than whichever player wrote it last.
+                GimmickStateCompat.ResyncUpsideDown();
+                UpsideDownProbe.Sample(context.Number);
             }
         }
 

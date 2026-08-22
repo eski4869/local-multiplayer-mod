@@ -262,6 +262,15 @@ components) from its process-wide setup (singleton drawing and animation
 entities). A mod that needs to tell the difference itself can read
 `IsSecondaryInitPass()`.
 
+### Mods that cannot be asked to change
+
+Replaying setup gives each player its own behaviours, but it cannot help a mod
+that keeps per-player state in a static — or that caches one `PlayerEntity` and
+consults it from patches running for every player. Those are corrected at run
+time from `GimmickStateCompat`, without modifying the mod: the patterns, and the
+rules for adding one, are in
+[third-party compatibility](docs/third-party-compatibility.md).
+
 ## Writing a multiplayer-friendly mod
 
 Consumer mods should stay multiplayer-agnostic: resolve a user to one
@@ -375,9 +384,15 @@ local pad toggles.
 
 - Some SwitchBlocks switch types do not respond for additional players. Warp,
   one-way and the other gimmick blocks do. Under investigation.
-- A third-party mod that stores per-player state in a static still mixes players
-  up. That can only be fixed in the mod itself, by moving the state onto
-  `GetPlayerState` / `SetPlayerState`.
+- A third-party mod that stores per-player state in a static mixes players up.
+  Several such mods are corrected from here without changing them - see
+  [third-party compatibility](docs/third-party-compatibility.md) - but each one
+  has to be diagnosed and added by hand, so an undiagnosed mod is still affected.
+  A mod that can be changed should move the state onto
+  `GetPlayerState` / `SetPlayerState` instead.
+- State a third-party mod genuinely shares between players, where two players
+  change what it means rather than corrupting it, cannot be resolved by
+  redirection at all.
 - A mod that does process-wide work in `[OnLevelStart]` other than creating
   entities - loading sounds, registering block factories - repeats that work once
   per player. Statics it assigns are rolled back after each replayed pass, so the
