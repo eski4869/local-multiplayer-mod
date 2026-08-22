@@ -553,7 +553,6 @@ namespace LocalMultiplayerMod
             // loaded before [BeforeLevelLoad] runs: this one looks other mods up
             // by name.
             GimmickStateCompat.Install(harmony);
-            TeleportProbe.Install(harmony);
 
             _harmony = harmony;
             if (!complete)
@@ -782,17 +781,6 @@ namespace LocalMultiplayerMod
         {
             PlayerScope.ResetIfLeaked();
             ModEntry.ProcessBrokerCommand();
-
-            if (MultiplayerRuntime.IsActive)
-            {
-                for (int number = 1; number <= MultiplayerRuntime.PlayerCount; number++)
-                {
-                    ScreenTrackingProbe.Sample(
-                        number,
-                        MultiplayerRuntime.GetContext(number)
-                    );
-                }
-            }
         }
     }
 

@@ -73,9 +73,6 @@
 		<Compile Include="MultiplayerStartPositions.cs" />
 		<Compile Include="PlayerContext.cs" />
 		<Compile Include="GimmickStateCompat.cs" />
-		<Compile Include="ScreenTrackingProbe.cs" />
-		<Compile Include="TeleportProbe.cs" />
-		<Compile Include="UpsideDownProbe.cs" />
 		<Compile Include="PlayerScope.cs" />
 		<Compile Include="ScopedFieldStore.cs" />
 		<Compile Include="PlayerSetup.cs" />

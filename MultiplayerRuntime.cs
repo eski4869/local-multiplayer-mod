@@ -547,7 +547,6 @@ namespace LocalMultiplayerMod
                 // player's scope makes it read this player's own gravity state
                 // rather than whichever player wrote it last.
                 GimmickStateCompat.ResyncUpsideDown();
-                UpsideDownProbe.Sample(context.Number);
             }
         }
 
