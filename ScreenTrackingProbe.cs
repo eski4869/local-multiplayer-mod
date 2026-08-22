@@ -49,5 +49,36 @@ namespace LocalMultiplayerMod
                 " y=" + context.Body.Position.Y
             );
         }
+
+        /// <summary>
+        /// Records that <see cref="PlayerScope" /> overrode a tracked screen that
+        /// had fallen too far from the body's own position.
+        ///
+        /// Every one of these means something moved a player from outside its own
+        /// update, which is the event this probe exists to catch. Reported here
+        /// rather than left to <see cref="Sample" />, because the correction
+        /// happens first and restores the drift to zero - so by the time the
+        /// sample runs there is nothing left to see.
+        /// </summary>
+        public static void NoteReconciled(PlayerContext context, int real)
+        {
+            if (!ModEntry.Diagnostics.ScreenTracking || context == null ||
+                context.Body == null)
+            {
+                return;
+            }
+
+            // The corrected value is what the next sample will read, so recording
+            // it keeps the two logs telling one continuous story.
+            LastLogged[context.Number] = 0;
+
+            JumpKing.Program.crashLog.AddErrorMessage(
+                "Local Multiplayer screen reconciled: player " + context.Number +
+                " tracked=" + context.Screen + " real=" + real +
+                " drift=" + (context.Screen - real) +
+                " onGround=" + context.Body.IsOnGround +
+                " y=" + context.Body.Position.Y
+            );
+        }
     }
 }

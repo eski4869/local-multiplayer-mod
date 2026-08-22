@@ -793,6 +793,20 @@ namespace LocalMultiplayerMod
         private static Func<bool> _readManagerIsReverseGravity;
 
         /// <summary>
+        /// <c>Manager.isUpsideDown</c> is the field that actually decides the
+        /// camera's screen crossing, the collision comparisons, the walk and jump
+        /// direction and the sprite flip - fourteen call sites against
+        /// <c>isReverseGravity</c>'s two. Reading only the latter answered the
+        /// wrong question.
+        ///
+        /// <c>gravity</c> is only consulted in <c>Auto</c> mode, and is written
+        /// per player from inside each body's own pass, so it is the one Manager
+        /// field the resync cannot put right on its own.
+        /// </summary>
+        private static Func<bool> _readManagerIsUpsideDown;
+        private static Func<float> _readManagerGravity;
+
+        /// <summary>
         /// True once binding has been attempted, success or failure. Without
         /// this, a map that never loads UpsideDownCore made every frame, for
         /// every player, re-scan every loaded assembly by reflection looking for
@@ -834,6 +848,14 @@ namespace LocalMultiplayerMod
                             managerType,
                             "isReverseGravity"
                         );
+                        _readManagerIsUpsideDown = CompileStaticFieldGetter<bool>(
+                            managerType,
+                            "isUpsideDown"
+                        );
+                        _readManagerGravity = CompileStaticFieldGetter<float>(
+                            managerType,
+                            "gravity"
+                        );
                     }
                     catch (Exception ex)
                     {
@@ -850,6 +872,8 @@ namespace LocalMultiplayerMod
             return "Controller.isReverseGravity=" + _readIsReverseGravity() +
                 " Controller.upsideDownType=" + _readUpsideDownType() +
                 " Manager.isReverseGravity=" + _readManagerIsReverseGravity() +
+                " Manager.isUpsideDown=" + _readManagerIsUpsideDown() +
+                " Manager.gravity=" + _readManagerGravity() +
                 " scope=" + (PlayerScope.Current == null
                     ? "none"
                     : PlayerScope.Current.Number.ToString());

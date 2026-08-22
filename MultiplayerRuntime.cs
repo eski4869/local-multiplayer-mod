@@ -1027,6 +1027,14 @@ namespace LocalMultiplayerMod
             // context, otherwise a scrolling ending would move the player's view.
             using (PlayerScope.Enter(context, false, false))
             {
+                // The scope installs this player's camera but not its gravity
+                // direction, and UpsideDownCore reads the latter while drawing -
+                // the sprite's vertical flip and its offset both come from
+                // Manager.isUpsideDown. Without this, every view is drawn with
+                // whichever player updated last, so an upside-down player and an
+                // upright one cannot both be shown correctly.
+                GimmickStateCompat.ResyncUpsideDown();
+
                 host.StartBatch();
                 _drawingPass = true;
                 LocalMultiplayerApi.SetCurrentViewPlayerMask(playerMask);

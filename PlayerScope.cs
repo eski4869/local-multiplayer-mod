@@ -237,6 +237,12 @@ namespace LocalMultiplayerMod
                 return;
             }
 
+            // Reported before it is applied, because correcting silently hides
+            // the only evidence that anything moved a player from outside its own
+            // update. Without this the screen-tracking probe goes quiet exactly
+            // when the interesting thing happens, which is worse than the drift.
+            ScreenTrackingProbe.NoteReconciled(context, real);
+
             context.Screen = real;
             context.Offset = Vector2.Zero;
         }

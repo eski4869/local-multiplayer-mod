@@ -568,6 +568,7 @@ namespace LocalMultiplayerMod
             // by name.
             GimmickStateCompat.Install(harmony);
             TeleportProbe.Install(harmony);
+            JumpProbe.Install(harmony);
 
             _harmony = harmony;
             if (!complete)
@@ -808,10 +809,9 @@ namespace LocalMultiplayerMod
             {
                 for (int number = 1; number <= MultiplayerRuntime.PlayerCount; number++)
                 {
-                    ScreenTrackingProbe.Sample(
-                        number,
-                        MultiplayerRuntime.GetContext(number)
-                    );
+                    PlayerContext context = MultiplayerRuntime.GetContext(number);
+                    ScreenTrackingProbe.Sample(number, context);
+                    JumpProbe.SamplePeak(number, context);
                 }
             }
         }
@@ -904,6 +904,13 @@ namespace LocalMultiplayerMod
         /// and a fix that never installed can be told apart.
         /// </summary>
         public bool UpsideDown { get; set; } = false;
+
+        /// <summary>
+        /// Every jump as it launches - intensity, the velocity it leaves with,
+        /// and how far it rose - plus how many other players were mid-charge at
+        /// the time. One line per jump, so this is quiet enough to leave on.
+        /// </summary>
+        public bool Jump { get; set; } = false;
     }
 
     /// <summary>
