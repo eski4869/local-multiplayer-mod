@@ -40,7 +40,7 @@ namespace LocalMultiplayerMod
         private bool _cameraSeeded;
         private Dictionary<object, object> _scoped;
 
-        public int Frame { get; private set; }
+        public long Frame { get; private set; }
 
         public int RootCount
         {
@@ -71,7 +71,7 @@ namespace LocalMultiplayerMod
         private static readonly Dictionary<string, FieldInfo> StateFieldCache =
             new Dictionary<string, FieldInfo>();
 
-        public static PlayerSnapshot Capture(PlayerContext context, int frame)
+        public static PlayerSnapshot Capture(PlayerContext context, long frame)
         {
             var snapshot = new PlayerSnapshot();
             if (context == null || !context.IsAlive)

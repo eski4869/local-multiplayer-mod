@@ -74,6 +74,10 @@
 		<Compile Include="MultiplayerRuntime.cs" />
 		<Compile Include="InputTimeline.cs" />
 		<Compile Include="NetplayClock.cs" />
+		<Compile Include="NetplayInput.cs" />
+		<Compile Include="NetplaySession.cs" />
+		<Compile Include="Resimulation.cs" />
+		<Compile Include="RollbackBuffer.cs" />
 		<Compile Include="NetplayLevelIdentity.cs" />
 		<Compile Include="NetplayPacket.cs" />
 		<Compile Include="NetplayTransport.cs" />

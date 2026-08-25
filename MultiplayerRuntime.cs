@@ -570,7 +570,24 @@ namespace LocalMultiplayerMod
         )
         {
             int playerNumber = MultiplayerRuntime.GetPlayerNumber(__instance);
-            if (playerNumber <= 1)
+            if (playerNumber < 1 || NetplaySession.IsReadingRealPad)
+            {
+                return true;
+            }
+
+            // In a netplay session every player is driven from the timeline,
+            // player 1 included. Reading the pad directly for the local player
+            // would make its input arrive a frame earlier here than on the other
+            // machine, and two simulations that disagree by one frame of charge
+            // disagree by about one block of height.
+            byte packed;
+            if (ModEntry.Netplay.TryGetInput(playerNumber, out packed))
+            {
+                __result = NetplayInput.Unpack(packed);
+                return false;
+            }
+
+            if (playerNumber == 1)
             {
                 return true;
             }

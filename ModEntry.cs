@@ -119,6 +119,12 @@ namespace LocalMultiplayerMod
             return _userRouter.Resolve(PlayerCount, user);
         }
 
+        /// <summary>
+        /// The netplay session. Idle until a lobby is opened, and costs one branch
+        /// per frame while it is.
+        /// </summary>
+        internal static readonly NetplaySession Netplay = new NetplaySession();
+
         internal static bool WriteSetupManifest
         {
             get
@@ -285,6 +291,16 @@ namespace LocalMultiplayerMod
             return new LocalMultiplayerBattleOption();
         }
 
+        [PauseMenuItemSetting]
+        [MainMenuItemSetting]
+        public static LocalMultiplayerNetplayOption LocalMultiplayerNetplayMenu(
+            object factory,
+            JumpKing.PauseMenu.GuiFormat format
+        )
+        {
+            return new LocalMultiplayerNetplayOption();
+        }
+
         private static void EnsurePatched()
         {
             if (_harmony != null)
@@ -294,6 +310,28 @@ namespace LocalMultiplayerMod
 
             var harmony = new Harmony("eski4869.LocalMultiplayerMod");
             bool complete = true;
+
+            // Steam callbacks are pumped by Game1.Update already, so registering
+            // is all this needs. Idle until somebody opens a lobby.
+            Netplay.Install();
+
+            // PauseManager is internal to the game, so it is reached by name
+            // rather than by type, exactly as AudioMixer and the gimmick
+            // compatibility layer reach their own targets.
+            Type pauseManager =
+                AccessTools.TypeByName("JumpKing.PauseMenu.PauseManager");
+            complete &= TryPatch(
+                harmony,
+                AccessTools.PropertyGetter(pauseManager, "IsPaused"),
+                typeof(NetplayPausePatch),
+                "PauseManager.IsPaused"
+            );
+            complete &= TryPatch(
+                harmony,
+                AccessTools.Method(pauseManager, "SetPause"),
+                typeof(NetplaySetPausePatch),
+                "PauseManager.SetPause"
+            );
 
             // Broker polling.
             complete &= TryPatch(
@@ -709,11 +747,55 @@ namespace LocalMultiplayerMod
         }
     }
 
+    /// <summary>
+    /// Makes a peer's pause pause this game too, through the game's own mechanism.
+    ///
+    /// In interference mode the shared world cannot advance on one player's input,
+    /// and a pause is far past any prediction window, so both sides have to stop.
+    /// Doing that by suppressing the update from outside would stop the pause menu
+    /// and the input polling with it, leaving no way to leave the session - the
+    /// player would be locked in by their partner's pause.
+    ///
+    /// <c>GameLoop.Update</c> already gates every piece of game logic on this one
+    /// property, and the game is built to be paused this way. Reporting the peer's
+    /// pause through it borrows all of that, menus included.
+    /// </summary>
+    internal static class NetplayPausePatch
+    {
+        public static void Postfix(ref bool __result)
+        {
+            if (!__result && ModEntry.Netplay.IsHeldByPeer)
+            {
+                __result = true;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Tells the peer when this player pauses, so both sides stop together.
+    ///
+    /// Patched on the static entry point rather than watched from the frame loop:
+    /// a pause that was noticed a frame late would let one side advance a frame the
+    /// other did not, and in a shared simulation that difference does not heal.
+    /// </summary>
+    internal static class NetplaySetPausePatch
+    {
+        public static void Postfix(bool p_pause)
+        {
+            ModEntry.Netplay.NoteLocalPause(p_pause);
+        }
+    }
+
     internal static class LocalMultiplayerGameUpdatePatch
     {
-        public static void Prefix()
+        public static bool Prefix(Microsoft.Xna.Framework.GameTime gameTime)
         {
             PlayerScope.ResetIfLeaked();
+
+            // A depth left behind by an exception inside a recomputation would
+            // silence every sound for the rest of the run, so it is cleared here
+            // where the depth is known to be zero.
+            Resimulation.ResetIfLeaked();
             ModEntry.ProcessBrokerCommand();
 
             if (MultiplayerRuntime.IsActive)
@@ -725,6 +807,18 @@ namespace LocalMultiplayerMod
                     JumpProbe.SamplePeak(number, context);
                 }
             }
+
+            float delta = gameTime == null
+                ? 0f
+                : (float)gameTime.ElapsedGameTime.TotalSeconds;
+
+            ModEntry.Netplay.BeforeGameUpdate(delta);
+            return true;
+        }
+
+        public static void Postfix()
+        {
+            ModEntry.Netplay.AfterGameUpdate();
         }
     }
 
@@ -1099,6 +1193,66 @@ namespace LocalMultiplayerMod
     /// Whether players fight. Kept as its own line rather than folded into the
     /// player count, so neither label has to grow to carry both.
     /// </summary>
+    /// <summary>
+    /// One control for the whole connection, reading <c>Open</c> or <c>Leave</c>
+    /// by state.
+    ///
+    /// No host-or-join question is asked. Whoever opens the lobby is the one who
+    /// invites, and Steam's overlay is how the other side accepts, so the
+    /// distinction never has to become a screen the player reads. That matches the
+    /// existing multiplayer mod's one good idea, and `world-interaction.md`'s
+    /// decision not to put a mode selection in front of anyone.
+    /// </summary>
+    public class LocalMultiplayerNetplayOption : IOptions
+    {
+        public LocalMultiplayerNetplayOption() : base(
+            2,
+            0,
+            IOptions.EdgeMode.Wrap
+        )
+        {
+        }
+
+        protected override bool CanChange()
+        {
+            return true;
+        }
+
+        protected override string CurrentOptionName()
+        {
+            switch (ModEntry.Netplay.Current)
+            {
+                case NetplaySession.Phase.WaitingForPeer:
+                    return "Netplay: inviting";
+                case NetplaySession.Phase.Handshaking:
+                    return "Netplay: connecting";
+                case NetplaySession.Phase.Playing:
+                    return "Netplay: connected";
+                case NetplaySession.Phase.Refused:
+                    return "Netplay: refused";
+                default:
+                    return "Netplay: off";
+            }
+        }
+
+        protected override void OnOptionChange(int option)
+        {
+            if (ModEntry.Netplay.Current == NetplaySession.Phase.Idle)
+            {
+                ModEntry.Netplay.Host();
+            }
+            else
+            {
+                ModEntry.Netplay.Leave();
+            }
+
+            // The label is the state, so it is read back rather than assumed:
+            // opening a lobby can fail, and saying "inviting" when it did not
+            // would be worse than saying nothing.
+            CurrentOption = 0;
+        }
+    }
+
     public class LocalMultiplayerBattleOption : IOptions
     {
         public LocalMultiplayerBattleOption() : base(
