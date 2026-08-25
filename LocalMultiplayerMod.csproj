@@ -68,6 +68,8 @@
 		<Compile Include="LocalMultiplayerApi.cs" />
 		<Compile Include="LocalMultiplayerLevelFile.cs" />
 		<Compile Include="MultiplayerRuntime.cs" />
+		<Compile Include="InputTimeline.cs" />
+		<Compile Include="NetplayClock.cs" />
 		<Compile Include="ObjectCopier.cs" />
 		<Compile Include="MultiplayerStartPositions.cs" />
 		<Compile Include="PlayerContext.cs" />
