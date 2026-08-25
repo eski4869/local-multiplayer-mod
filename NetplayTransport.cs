@@ -12,11 +12,17 @@ namespace LocalMultiplayerMod
     /// Steam already solves those, and solving them again would be the most
     /// expensive part of this by far.
     ///
-    /// **Invite-only by default**, unlike the existing multiplayer mod, which
-    /// defaults to a public lobby. A public lobby puts strangers on the roster,
-    /// their P2P sessions are accepted automatically because they are on it, and
-    /// what crosses is a live position - which is a streaming hazard, not a
-    /// preference.
+    /// **Friends-only**, unlike the existing multiplayer mod, which defaults to a
+    /// public lobby. A public lobby puts strangers on the roster, their P2P
+    /// sessions are accepted automatically because they are on it, and what crosses
+    /// is a live position - which is a streaming hazard, not a preference.
+    ///
+    /// Friends-only rather than private or invisible, because the lobby has to be
+    /// *findable* by the person you want to play with. A friends-only lobby shows
+    /// up as "Join Game" beside your name in their Steam friends list, so no code
+    /// has to be read out and nothing has to be typed. Invisible is the trap here:
+    /// it means "joinable but hidden from friends", which is the opposite of what
+    /// a two-person session wants.
     ///
     /// **Unreliable sends.** Steam's reliable mode buffers for up to 200ms, and
     /// waiting for something that was already superseded is the wrong trade for
@@ -112,8 +118,7 @@ namespace LocalMultiplayerMod
         }
 
         /// <summary>
-        /// Opens an invite-only lobby. The friends overlay is how somebody joins,
-        /// which is also what keeps the roster to people who were invited.
+        /// Opens a friends-only lobby.
         /// </summary>
         public void CreateLobby()
         {
@@ -122,7 +127,34 @@ namespace LocalMultiplayerMod
                 return;
             }
 
-            SteamMatchmaking.CreateLobby(ELobbyType.k_ELobbyTypeInvisible, MaxMembers);
+            SteamMatchmaking.CreateLobby(
+                ELobbyType.k_ELobbyTypeFriendsOnly,
+                MaxMembers
+            );
+        }
+
+        /// <summary>
+        /// Opens Steam's own invite picker for this lobby.
+        ///
+        /// There has to be a way to actually reach somebody, and this is Steam's:
+        /// it lists the friends who can be invited and sends the invitation, which
+        /// arrives for them as a normal Steam notification. Building a friend
+        /// picker of our own would mean reimplementing something the platform
+        /// already does better, inside a pause menu drawn in a pixel font.
+        ///
+        /// It needs the Steam overlay to be enabled. When it is not, the lobby is
+        /// still there and still friends-only, so the other side can join from the
+        /// friends list instead - which is why this is offered rather than
+        /// required.
+        /// </summary>
+        public void ShowInviteDialog()
+        {
+            if (!IsAvailable || !IsInLobby)
+            {
+                return;
+            }
+
+            SteamFriends.ActivateGameOverlayInviteDialog(_lobby);
         }
 
         public void LeaveLobby()
@@ -240,6 +272,12 @@ namespace LocalMultiplayerMod
 
             _lobby = new CSteamID(created.m_ulSteamIDLobby);
             RefreshPeers();
+
+            // Opening the picker straight away is the difference between a lobby
+            // and a session. A player who turned this on wants to play with
+            // somebody, and leaving them to find the invite themselves is where
+            // this stalled before.
+            ShowInviteDialog();
         }
 
         private void OnLobbyEntered(LobbyEnter_t entered)

@@ -118,6 +118,15 @@ namespace LocalMultiplayerMod
             _phase = Phase.WaitingForPeer;
         }
 
+        /// <summary>
+        /// Opens Steam's invite picker again, for when the first one was dismissed
+        /// or the overlay was not ready yet.
+        /// </summary>
+        public void Invite()
+        {
+            _transport.ShowInviteDialog();
+        }
+
         public void Leave()
         {
             _transport.LeaveLobby();

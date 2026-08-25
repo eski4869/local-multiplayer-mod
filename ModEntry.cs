@@ -11,7 +11,11 @@ using JumpKing.GameManager.MultiEnding;
 using JumpKing.Level;
 using JumpKing.MiscEntities.WorldItems.Inventory;
 using JumpKing.Mods;
+using BehaviorTree;
+using JumpKing.Controller;
+using JumpKing.PauseMenu;
 using JumpKing.PauseMenu.BT.Actions;
+using Microsoft.Xna.Framework;
 using JumpKing.Player;
 
 namespace LocalMultiplayerMod
@@ -124,6 +128,25 @@ namespace LocalMultiplayerMod
         /// per frame while it is.
         /// </summary>
         internal static readonly NetplaySession Netplay = new NetplaySession();
+
+        /// <summary>
+        /// True once a lobby exists, whether or not the peer has arrived.
+        ///
+        /// The settings a session agreed on stop being this machine's to change at
+        /// that point. `world-interaction.md` names the split: the line is not
+        /// local against network but before a session against during one, and
+        /// session-wide settings are locked while one is running rather than
+        /// silently disagreeing between the two machines.
+        ///
+        /// The view is not among them. It decides what this screen shows and
+        /// nothing about the simulation, so it stays each machine's own - which is
+        /// also why netplay can fix it to one value without that being a
+        /// restriction anybody has to agree to.
+        /// </summary>
+        internal static bool IsSessionLocked
+        {
+            get { return Netplay.Current != NetplaySession.Phase.Idle; }
+        }
 
         internal static bool WriteSetupManifest
         {
@@ -293,12 +316,12 @@ namespace LocalMultiplayerMod
 
         [PauseMenuItemSetting]
         [MainMenuItemSetting]
-        public static LocalMultiplayerNetplayOption LocalMultiplayerNetplayMenu(
+        public static LocalMultiplayerInviteAction LocalMultiplayerInviteMenu(
             object factory,
             JumpKing.PauseMenu.GuiFormat format
         )
         {
-            return new LocalMultiplayerNetplayOption();
+            return new LocalMultiplayerInviteAction();
         }
 
         private static void EnsurePatched()
@@ -1041,40 +1064,98 @@ namespace LocalMultiplayerMod
     }
 
     /// <summary>
-    /// How many players. Kept separate from the split layout so each menu line
-    /// stays short enough to fit, and so changing one does not read as changing
-    /// the other.
+    /// What shape this session takes: solo, two players here, four players here,
+    /// or online.
+    ///
+    /// **Online belongs in this control rather than beside it.** It is not a
+    /// switch layered over a player count - it is a fourth answer to the same
+    /// question, and mutually exclusive with the other three. Putting it here
+    /// makes "online with four local players" impossible to express rather than
+    /// merely discouraged, and leaves one place to look for what is running.
+    ///
+    /// It is also the only control that is never locked, because it is how a
+    /// session is left as well as entered. Locking it would trap a player in
+    /// their partner's session.
+    ///
+    /// Kept separate from the view, which stays each machine's own and does not
+    /// describe the session at all.
     /// </summary>
     public class LocalMultiplayerModeOption : IOptions
     {
         public LocalMultiplayerModeOption() : base(
-            3,
+            4,
             PlayerCountToOption(ModEntry.PlayerCount),
             IOptions.EdgeMode.Wrap
         )
         {
         }
 
+        /// <summary>Online is the fourth shape, after the three local ones.</summary>
+        internal const int OnlineOption = 3;
+
         protected override bool CanChange()
         {
+            // Never locked. This control is how a session is left as well as
+            // entered, and a player who cannot leave their partner's session is
+            // trapped by it.
             return true;
         }
 
         protected override string CurrentOptionName()
         {
+            if (CurrentOption == OnlineOption)
+            {
+                switch (ModEntry.Netplay.Current)
+                {
+                    case NetplaySession.Phase.WaitingForPeer:
+                        return "Play: Online - inviting";
+                    case NetplaySession.Phase.Handshaking:
+                        return "Play: Online - connecting";
+                    case NetplaySession.Phase.Playing:
+                        return "Play: Online - connected";
+                    case NetplaySession.Phase.Refused:
+                        return "Play: Online - refused";
+                    default:
+                        return "Play: Online";
+                }
+            }
+
             switch (CurrentOption)
             {
                 case 1:
-                    return "Players: 2";
+                    return "Play: 2 Players";
                 case 2:
-                    return "Players: 4";
+                    return "Play: 4 Players";
                 default:
-                    return "Players: 1";
+                    return "Play: Solo";
             }
         }
 
         protected override void OnOptionChange(int option)
         {
+            // Leaving online is part of moving off it, so this runs first
+            // whichever direction the player went.
+            if (option != OnlineOption &&
+                ModEntry.Netplay.Current != NetplaySession.Phase.Idle)
+            {
+                ModEntry.Netplay.Leave();
+            }
+
+            if (option == OnlineOption)
+            {
+                // One player per machine, so a session is two players sharing one
+                // view. The split layouts give each local player a camera of their
+                // own, which means nothing when only one of them is local.
+                if (!ModEntry.SetPlayerMode(2, TwoPlayerLayout.Shared))
+                {
+                    CurrentOption = PlayerCountToOption(ModEntry.PlayerCount);
+                    return;
+                }
+
+                ModEntry.Netplay.Host();
+                return;
+            }
+
             int playerCount = OptionToPlayerCount(option);
             if (ModEntry.SetPlayerMode(playerCount, ModEntry.TwoPlayerLayout))
             {
@@ -1087,6 +1168,11 @@ namespace LocalMultiplayerMod
 
         private static int PlayerCountToOption(int playerCount)
         {
+            if (ModEntry.Netplay.Current != NetplaySession.Phase.Idle)
+            {
+                return OnlineOption;
+            }
+
             switch (playerCount)
             {
                 case 2:
@@ -1128,7 +1214,11 @@ namespace LocalMultiplayerMod
 
         protected override bool CanChange()
         {
-            return true;
+            // The view is normally each machine's own business, and stays free.
+            // Online is the exception, and not because it is shared: with one
+            // player per machine there is only one local camera, so the split
+            // layouts have nothing to split.
+            return !ModEntry.IsSessionLocked;
         }
 
         protected override string CurrentOptionName()
@@ -1194,62 +1284,78 @@ namespace LocalMultiplayerMod
     /// player count, so neither label has to grow to carry both.
     /// </summary>
     /// <summary>
-    /// One control for the whole connection, reading <c>Open</c> or <c>Leave</c>
-    /// by state.
+    /// Opens Steam's invite picker. An action, not a setting.
     ///
-    /// No host-or-join question is asked. Whoever opens the lobby is the one who
-    /// invites, and Steam's overlay is how the other side accepts, so the
-    /// distinction never has to become a screen the player reads. That matches the
-    /// existing multiplayer mod's one good idea, and `world-interaction.md`'s
-    /// decision not to put a mode selection in front of anyone.
+    /// The connection itself is chosen on the Play control, because "online" is
+    /// one of the shapes a session can take rather than a switch layered over the
+    /// local ones - putting it there is what makes "online plus four local
+    /// players" impossible to express instead of merely discouraged. What is left
+    /// is the one thing that is genuinely a verb: reaching the other person.
+    ///
+    /// Steam's own picker is used rather than a friend list drawn here. It knows
+    /// who is invitable and delivers the invitation as a normal Steam
+    /// notification; reimplementing that inside a pause menu in a pixel font would
+    /// be worse at it in every way. The lobby is friends-only besides, so somebody
+    /// can also just join from their friends list without an invitation at all.
     /// </summary>
-    public class LocalMultiplayerNetplayOption : IOptions
+    public class LocalMultiplayerInviteAction : IBTSimpleMenuItem
     {
-        public LocalMultiplayerNetplayOption() : base(
-            2,
-            0,
-            IOptions.EdgeMode.Wrap
-        )
+        public override void Draw(int x, int y, bool selected)
         {
+            MenuItemHelper.Draw(
+                x,
+                y,
+                Label,
+                IsAvailable ? Color.White : Color.Gray,
+                Game1.instance.contentManager.font.MenuFont
+            );
         }
 
-        protected override bool CanChange()
+        public override Point GetSize()
         {
-            return true;
+            return MenuItemHelper.GetSize(Label);
         }
 
-        protected override string CurrentOptionName()
+        protected override BTresult MyRun(TickData p_data)
         {
-            switch (ModEntry.Netplay.Current)
+            if (!IsAvailable)
             {
-                case NetplaySession.Phase.WaitingForPeer:
-                    return "Netplay: inviting";
-                case NetplaySession.Phase.Handshaking:
-                    return "Netplay: connecting";
-                case NetplaySession.Phase.Playing:
-                    return "Netplay: connected";
-                case NetplaySession.Phase.Refused:
-                    return "Netplay: refused";
-                default:
-                    return "Netplay: off";
+                return BTresult.Failure;
+            }
+
+            if (!ControllerManager.instance.MenuController.GetPadState().confirm)
+            {
+                return BTresult.Failure;
+            }
+
+            ControllerManager.instance.MenuController.ConsumePadPresses();
+            ModEntry.Netplay.Invite();
+            return BTresult.Success;
+        }
+
+        /// <summary>
+        /// Only once a lobby exists. Before that there is nothing to invite anyone
+        /// to, and greying it out says so more clearly than a button that appears
+        /// to work and does nothing.
+        /// </summary>
+        private static bool IsAvailable
+        {
+            get
+            {
+                return ModEntry.Netplay.Current ==
+                        NetplaySession.Phase.WaitingForPeer ||
+                    ModEntry.Netplay.Current == NetplaySession.Phase.Handshaking;
             }
         }
 
-        protected override void OnOptionChange(int option)
+        private static string Label
         {
-            if (ModEntry.Netplay.Current == NetplaySession.Phase.Idle)
+            get
             {
-                ModEntry.Netplay.Host();
+                return ModEntry.Netplay.Current == NetplaySession.Phase.Playing
+                    ? "Invite: connected"
+                    : "Invite a friend";
             }
-            else
-            {
-                ModEntry.Netplay.Leave();
-            }
-
-            // The label is the state, so it is read back rather than assumed:
-            // opening a lobby can fail, and saying "inviting" when it did not
-            // would be worse than saying nothing.
-            CurrentOption = 0;
         }
     }
 
@@ -1265,7 +1371,9 @@ namespace LocalMultiplayerMod
 
         protected override bool CanChange()
         {
-            return true;
+            // Locked while a session exists: this is agreed once and must not
+            // drift apart on the two machines afterwards.
+            return !ModEntry.IsSessionLocked;
         }
 
         protected override string CurrentOptionName()
