@@ -18,6 +18,7 @@
     <Compile Include="..\StateSnapshot.cs" Link="StateSnapshot.cs" />
     <Compile Include="..\InputTimeline.cs" Link="InputTimeline.cs" />
     <Compile Include="..\NetplayClock.cs" Link="NetplayClock.cs" />
+    <Compile Include="..\NetplayPacket.cs" Link="NetplayPacket.cs" />
     <Compile Include="..\UserCommandRouting.cs" Link="UserCommandRouting.cs" />
     <Compile Include="..\GatherCommand.cs" Link="GatherCommand.cs" />
   </ItemGroup>

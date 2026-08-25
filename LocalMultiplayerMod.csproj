@@ -49,6 +49,10 @@
 			<SpecificVersion>False</SpecificVersion>
 			<HintPath>C:\Program Files (x86)\Steam\steamapps\common\Jump King\MonoGame.Framework.dll</HintPath>
 		</Reference>
+		<Reference Include="Steamworks.NET">
+			<Private>False</Private>
+			<HintPath>C:\Program Files (x86)\Steam\steamapps\common\Jump King\Steamworks.NET.dll</HintPath>
+		</Reference>
 		<Reference Include="0Harmony">
 			<Private>True</Private>
 			<HintPath>C:\Program Files (x86)\Steam\steamapps\common\Jump King\Content\JKMods\0Harmony.dll</HintPath>
@@ -70,6 +74,9 @@
 		<Compile Include="MultiplayerRuntime.cs" />
 		<Compile Include="InputTimeline.cs" />
 		<Compile Include="NetplayClock.cs" />
+		<Compile Include="NetplayLevelIdentity.cs" />
+		<Compile Include="NetplayPacket.cs" />
+		<Compile Include="NetplayTransport.cs" />
 		<Compile Include="ObjectCopier.cs" />
 		<Compile Include="MultiplayerStartPositions.cs" />
 		<Compile Include="PlayerContext.cs" />
