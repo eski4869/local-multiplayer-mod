@@ -65,7 +65,6 @@
 		<Compile Include="ModEntry.cs" />
 		<Compile Include="GlobalShims.cs" />
 		<Compile Include="ItemToggles.cs" />
-		<Compile Include="LevelStartReplay.cs" />
 		<Compile Include="LocalMultiplayerApi.cs" />
 		<Compile Include="LocalMultiplayerLevelFile.cs" />
 		<Compile Include="MultiplayerRuntime.cs" />
@@ -83,7 +82,6 @@
 		<Compile Include="PlayerSetupManifest.cs" />
 		<Compile Include="PlayerSkinComposer.cs" />
 		<Compile Include="PlayerSpriteFactory.cs" />
-		<Compile Include="ReplayIsolation.cs" />
 		<Compile Include="UserCommandRouting.cs" />
 		<Compile Include="Properties\AssemblyInfo.cs" />
 	</ItemGroup>

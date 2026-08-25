@@ -158,11 +158,11 @@ namespace LocalMultiplayerMod
 
         /// <summary>
         /// Called right after the base dispatch, to give every additional player
-        /// the same hook the first player just received.
+        /// copies of the block behaviours the first player just received.
         /// </summary>
         public static void AfterModLevelStart()
         {
-            ReplayForAdditionalPlayers();
+            SetUpAdditionalPlayers();
             RaisePlayersAboveLevelStartEntities();
         }
 
@@ -256,7 +256,7 @@ namespace LocalMultiplayerMod
             StartAdditionalPlayers(playerCount);
             // Mid-run change: the mod hooks already ran for the players that
             // existed then, so the new ones need their own pass.
-            ReplayForAdditionalPlayers();
+            SetUpAdditionalPlayers();
         }
 
         public static void FinishRace()
@@ -316,7 +316,7 @@ namespace LocalMultiplayerMod
             mover.CameraSeeded = target.CameraSeeded;
         }
 
-        private static void ReplayForAdditionalPlayers()
+        private static void SetUpAdditionalPlayers()
         {
             if (!ModEntry.IsMultiplayerEnabled)
             {
@@ -328,12 +328,12 @@ namespace LocalMultiplayerMod
             for (int i = 0; i < contexts.Count; i++)
             {
                 PlayerContext context = contexts[i];
-                if (context.IsPrimary || context.LevelStartReplayed)
+                if (context.IsPrimary || context.BlockBehavioursApplied)
                 {
                     continue;
                 }
 
-                context.LevelStartReplayed = true;
+                context.BlockBehavioursApplied = true;
                 pending.Add(context);
             }
 

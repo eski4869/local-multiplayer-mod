@@ -653,8 +653,7 @@ namespace LocalMultiplayerMod
 
         private static void JumpSetupPostfix(object settings)
         {
-            if (LevelStartReplay.IsSecondaryPass || settings == null ||
-                _jumpIsUsed == null || !_jumpIsUsed())
+            if (settings == null || _jumpIsUsed == null || !_jumpIsUsed())
             {
                 return;
             }

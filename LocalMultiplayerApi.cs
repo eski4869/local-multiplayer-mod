@@ -119,13 +119,19 @@ namespace LocalMultiplayerMod
         }
 
         /// <summary>
-        /// True while a mod's <c>[OnLevelStart]</c> is being replayed for an
-        /// additional player. Process-wide setup should be skipped when this is
-        /// set; per-player setup (block behaviours, player components) should not.
+        /// Always false. Kept so mods built against earlier versions keep
+        /// compiling and behaving correctly.
+        ///
+        /// This reported whether a mod's <c>[OnLevelStart]</c> was being replayed
+        /// for an additional player, so process-wide setup could be skipped on the
+        /// repeat passes. Additional players are now given copies of player 1's
+        /// block behaviours instead, and no mod code is re-run - so there is no
+        /// secondary pass to warn about, and a caller that skips its process-wide
+        /// setup when this is set now correctly never skips it.
         /// </summary>
         public static bool IsSecondaryInitPass()
         {
-            return LevelStartReplay.IsSecondaryPass;
+            return false;
         }
 
         /// <summary>

@@ -5,26 +5,20 @@ using JumpKing.API;
 namespace LocalMultiplayerMod
 {
     /// <summary>
-    /// Gives the additional players the block behaviours player 1 received.
+    /// Gives the additional players the block behaviours player 1 received, by
+    /// copying them.
     ///
-    /// Two mechanisms exist side by side while the second is being proven.
+    /// No mod code runs. The behaviours player 1 was given are copied, their
+    /// player-typed fields rebound, and the copies registered.
     ///
-    /// <c>Replay</c> re-runs each block mod's <c>[OnLevelStart]</c> once per player
-    /// and rolls back the globals it touched. It works, and it is what shipped, but
-    /// its correctness is unbounded: rolling back everything a hook can reach
-    /// cannot be enumerated, the rollback restores references rather than values,
-    /// and the traversal order follows mod load order, which the loader does not
-    /// sort.
-    ///
-    /// <c>Clone</c> runs no mod code at all. The behaviours player 1 was given are
-    /// copied, their player-typed fields rebound, and the copies registered. There
-    /// is nothing to roll back because nothing was re-run, no entity or draw-order
-    /// suppression is needed for the same reason, and the result does not depend on
-    /// load order.
-    ///
-    /// The default stays <c>Replay</c> until the manifests agree. Switching the
-    /// default on a released mod before that comparison exists would be trading a
-    /// known behaviour for an unmeasured one.
+    /// The alternative this replaced was re-running each block mod's
+    /// <c>[OnLevelStart]</c> once per player and rolling back the globals it
+    /// touched. That worked, but its correctness was unbounded: what a hook can
+    /// reach cannot be enumerated, so every mod that did something global in its
+    /// level-start hook was a new rollback case to discover - a liability against
+    /// mods not yet written. It also restored references rather than values, and
+    /// depended on mod load order, which the loader does not sort. Copying an
+    /// object has none of those properties.
     /// </summary>
     internal static class PlayerSetup
     {
@@ -35,20 +29,11 @@ namespace LocalMultiplayerMod
                 return;
             }
 
-            PlayerSetupMode mode = ModEntry.PlayerSetupMode;
-
-            if (mode == PlayerSetupMode.Clone)
-            {
-                CloneForAll(contexts);
-            }
-            else
-            {
-                LevelStartReplay.Run(contexts);
-            }
+            CloneForAll(contexts);
 
             if (ModEntry.WriteSetupManifest)
             {
-                PlayerSetupManifest.Write(mode.ToString());
+                PlayerSetupManifest.Write("Clone");
             }
         }
 
@@ -141,14 +126,5 @@ namespace LocalMultiplayerMod
             );
         }
 
-    }
-
-    internal enum PlayerSetupMode
-    {
-        /// <summary>Re-run each block mod's level-start hook per player.</summary>
-        Replay,
-
-        /// <summary>Copy player 1's behaviours for each additional player.</summary>
-        Clone
     }
 }

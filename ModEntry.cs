@@ -119,24 +119,6 @@ namespace LocalMultiplayerMod
             return _userRouter.Resolve(PlayerCount, user);
         }
 
-        /// <summary>
-        /// Which mechanism gives the additional players their block behaviours.
-        /// An unrecognised value reads as <c>Replay</c>: a typo in a settings file
-        /// should leave the shipped behaviour in place, not silently select the one
-        /// still being proven.
-        /// </summary>
-        internal static PlayerSetupMode PlayerSetupMode
-        {
-            get
-            {
-                EnsurePreferencesLoaded();
-                string mode = _preferences.PlayerSetup.Mode;
-                return string.Equals(mode, "Clone", StringComparison.OrdinalIgnoreCase)
-                    ? LocalMultiplayerMod.PlayerSetupMode.Clone
-                    : LocalMultiplayerMod.PlayerSetupMode.Replay;
-            }
-        }
-
         internal static bool WriteSetupManifest
         {
             get
@@ -158,60 +140,6 @@ namespace LocalMultiplayerMod
                 EnsurePreferencesLoaded();
                 return _preferences.Diagnostics;
             }
-        }
-
-        /// <summary>
-        /// Decides whether a mod's <c>[OnLevelStart]</c> is replayed per player.
-        ///
-        /// The default answer is "only if it registered a block behaviour", which
-        /// a mod proves by doing it during the normal dispatch. The two lists are
-        /// escape hatches for the cases that judgement gets wrong.
-        /// </summary>
-        internal static bool ShouldReplayMod(
-            string modName,
-            bool registeredBlockBehaviour
-        )
-        {
-            EnsurePreferencesLoaded();
-            LevelStartReplayPreferences settings = _preferences.LevelStartReplay;
-
-            if (ContainsModName(settings.NeverReplay, modName))
-            {
-                return false;
-            }
-
-            if (ContainsModName(settings.AlsoReplay, modName))
-            {
-                return true;
-            }
-
-            return registeredBlockBehaviour;
-        }
-
-        private static bool ContainsModName(string list, string modName)
-        {
-            if (string.IsNullOrEmpty(list) || string.IsNullOrEmpty(modName))
-            {
-                return false;
-            }
-
-            string[] entries = list.Split(
-                new[] { ';', ',' },
-                StringSplitOptions.RemoveEmptyEntries
-            );
-            for (int i = 0; i < entries.Length; i++)
-            {
-                if (string.Equals(
-                    entries[i].Trim(),
-                    modName,
-                    StringComparison.OrdinalIgnoreCase
-                ))
-                {
-                    return true;
-                }
-            }
-
-            return false;
         }
 
         internal static void ProcessBrokerCommand()
@@ -490,18 +418,6 @@ namespace LocalMultiplayerMod
             );
             complete &= TryPatch(
                 harmony,
-                AccessTools.Method(typeof(EntityManager), "AddObject"),
-                typeof(EntityManagerAddObjectPatch),
-                "EntityManager.AddObject"
-            );
-            complete &= TryPatch(
-                harmony,
-                AccessTools.Method(typeof(EntityManager), "MoveToFront"),
-                typeof(EntityManagerMoveToFrontPatch),
-                "EntityManager.MoveToFront"
-            );
-            complete &= TryPatch(
-                harmony,
                 AccessTools.Method(
                     typeof(BodyComp),
                     "RegisterBlockBehaviour",
@@ -766,11 +682,6 @@ namespace LocalMultiplayerMod
                 preferences.FourPlayerMode.EnsureInitialized();
             }
 
-            if (preferences.LevelStartReplay == null)
-            {
-                preferences.LevelStartReplay = new LevelStartReplayPreferences();
-            }
-
             // A settings file written before this section existed has no
             // Diagnostics element, and every probe reads through it.
             if (preferences.Diagnostics == null)
@@ -833,13 +744,13 @@ namespace LocalMultiplayerMod
     {
         public static void Prefix()
         {
-            LevelStartReplay.BeginBaseDispatch();
+            BlockBehaviourRecorder.BeginDispatch();
             MultiplayerRuntime.BeforeModLevelStart();
         }
 
         public static void Postfix()
         {
-            LevelStartReplay.EndBaseDispatch();
+            BlockBehaviourRecorder.EndDispatch();
             MultiplayerRuntime.AfterModLevelStart();
         }
     }
@@ -856,8 +767,6 @@ namespace LocalMultiplayerMod
             new MultiplayerModePreferences();
         public FourPlayerModePreferences FourPlayerMode { get; set; } =
             new FourPlayerModePreferences();
-        public LevelStartReplayPreferences LevelStartReplay { get; set; } =
-            new LevelStartReplayPreferences();
         public PlayerSetupPreferences PlayerSetup { get; set; } =
             new PlayerSetupPreferences();
         public DiagnosticsPreferences Diagnostics { get; set; } =
@@ -920,36 +829,10 @@ namespace LocalMultiplayerMod
     public class PlayerSetupPreferences
     {
         /// <summary>
-        /// <c>Replay</c> or <c>Clone</c>. Defaults to <c>Replay</c>, which is what
-        /// shipped. <c>Clone</c> runs no mod code and is expected to replace it,
-        /// once the two have been shown to produce the same manifest.
-        /// </summary>
-        public string Mode { get; set; } = "Replay";
-
-        /// <summary>
         /// Write what each player's body actually holds to a text file beside the
         /// settings. Off by default; the point of it is comparing two runs.
         /// </summary>
         public bool WriteManifest { get; set; } = false;
-    }
-
-    /// <summary>
-    /// Overrides for which mods get their <c>[OnLevelStart]</c> replayed per
-    /// player. Both are semicolon-separated mod names as they appear in
-    /// <c>ModLoadLog.txt</c>, and both are normally empty: a mod qualifies by
-    /// registering a block behaviour, which needs no configuration.
-    ///
-    /// These apply to <c>PlayerSetup.Mode = Replay</c> only. Cloning has no
-    /// qualification step - it reproduces every registration - so there is nothing
-    /// for an override to correct.
-    /// </summary>
-    public class LevelStartReplayPreferences
-    {
-        /// <summary>Replay these even though they registered no block behaviour.</summary>
-        public string AlsoReplay { get; set; } = string.Empty;
-
-        /// <summary>Never replay these, whatever they registered.</summary>
-        public string NeverReplay { get; set; } = string.Empty;
     }
 
     public class SingleModePreferences

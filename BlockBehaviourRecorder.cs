@@ -70,19 +70,33 @@ namespace LocalMultiplayerMod
             get { return Records.Count; }
         }
 
-        public static void Clear()
+        /// <summary>
+        /// True while the base game is dispatching <c>[OnLevelStart]</c>, which is
+        /// the only window worth recording.
+        /// </summary>
+        public static bool IsDispatch { get; private set; }
+
+        public static void BeginDispatch()
         {
             Records.Clear();
+            IsDispatch = true;
+        }
+
+        public static void EndDispatch()
+        {
+            IsDispatch = false;
         }
 
         /// <summary>
         /// Called from the <c>RegisterBlockBehaviour</c> shim, before the base
-        /// method runs.
+        /// method runs. Outside the dispatch window this does nothing:
+        /// <c>BodyComp</c> registers the base game's own ice, sand, water and snow
+        /// behaviours from its constructor, and those already happen once per
+        /// player.
         /// </summary>
         /// <param name="body">
-        /// The body being registered on. Registrations on anything other than
-        /// player 1 are ignored: the recording describes what player 1 received,
-        /// and that is what the other players are given a copy of.
+        /// The body being registered on. Which body mattered is decided later,
+        /// when there is a context to ask.
         /// </param>
         public static void Note(
             BodyComp body,
@@ -90,7 +104,7 @@ namespace LocalMultiplayerMod
             IBlockBehaviour behaviour
         )
         {
-            if (blockType == null || behaviour == null || body == null)
+            if (!IsDispatch || blockType == null || behaviour == null || body == null)
             {
                 return;
             }

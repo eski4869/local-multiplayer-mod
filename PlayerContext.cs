@@ -67,10 +67,10 @@ namespace LocalMultiplayerMod
         public bool CameraSeeded;
 
         /// <summary>
-        /// True once every mod's <c>[OnLevelStart]</c> has been replayed against
-        /// this player, so a mid-run player-count change does not replay twice.
+        /// True once this player has been given its copies of the recorded block
+        /// behaviours, so a mid-run player-count change does not register twice.
         /// </summary>
-        public bool LevelStartReplayed;
+        public bool BlockBehavioursApplied;
 
         public PlayerContext(int number, PlayerEntity player)
         {

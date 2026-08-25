@@ -24,10 +24,6 @@
     </DefaultRoutes>
     <UserOverrides />
   </FourPlayerMode>
-  <LevelStartReplay>
-    <AlsoReplay />
-    <NeverReplay />
-  </LevelStartReplay>
   <!-- Developer probes. Each writes to the crash log when its answer changes,
        and each is silent while false. Turn one on, reproduce, read the log. -->
   <Diagnostics>

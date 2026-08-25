@@ -246,33 +246,16 @@ namespace LocalMultiplayerMod
     }
 
     /// <summary>
-    /// Suppresses entity registration during a replayed <c>[OnLevelStart]</c> pass.
-    ///
-    /// A block mod's level-start hook typically does two things: register block
-    /// behaviours on the player's body (what we want repeated per player) and
-    /// create singleton drawing or animation entities (what we do not). Behaviour
-    /// registration does not go through the EntityManager, so suppressing
-    /// registration on the replay passes separates the two cleanly.
-    /// </summary>
-    internal static class EntityManagerAddObjectPatch
-    {
-        public static bool Prefix(Entity p_obj)
-        {
-            return !LevelStartReplay.SuppressEntityRegistration ||
-                MultiplayerRuntime.IsManagedPlayer(p_obj);
-        }
-    }
-
-    /// <summary>
-    /// Detects which mods are block mods, by observing who registers an
-    /// <c>IBlockBehaviour</c> during the normal level-start dispatch.
-    ///
-    /// This is what keeps the replay narrow. A mod qualifies by demonstrating
-    /// what it is, so no hand-maintained list of mod names is needed and a mod
-    /// released tomorrow is handled correctly.
+    /// Records every block behaviour registered during the level-start dispatch,
+    /// which is what the additional players are given a copy of.
     ///
     /// The generic <c>RegisterBlockBehaviour&lt;T&gt;</c> overload forwards to
     /// this one, so patching here catches both call styles.
+    ///
+    /// Recorded even in single player. Whether a recording is needed is not known
+    /// until later - switching to multiplayer from the pause menu sets players up
+    /// mid-run, long after this dispatch is over - and a record must not be gated
+    /// on the state at the time it is taken.
     /// </summary>
     internal static class BodyCompRegisterBlockBehaviourPatch
     {
@@ -282,15 +265,7 @@ namespace LocalMultiplayerMod
             IBlockBehaviour blockBehaviour
         )
         {
-            LevelStartReplay.NoteBlockBehaviourRegistration();
-
-            // Recorded regardless of which setup mechanism is selected. The
-            // recording is what the two mechanisms are compared against, so it
-            // must not be conditional on the one being used.
-            if (LevelStartReplay.IsBaseDispatch)
-            {
-                BlockBehaviourRecorder.Note(__instance, blockType, blockBehaviour);
-            }
+            BlockBehaviourRecorder.Note(__instance, blockType, blockBehaviour);
         }
     }
 
@@ -315,20 +290,4 @@ namespace LocalMultiplayerMod
         }
     }
 
-    /// <summary>
-    /// Suppresses draw-order shuffling during a replayed level-start pass.
-    ///
-    /// Necessary for the suppression above to hold: <c>MoveToFront</c> removes and
-    /// re-adds, so <c>GoToFront</c> on an entity we declined to register would
-    /// register it after all. SwitchBlocks calls exactly that on every entity in
-    /// its level-start hook. Order was already settled on the first pass, so
-    /// skipping the replayed shuffles is also the correct outcome.
-    /// </summary>
-    internal static class EntityManagerMoveToFrontPatch
-    {
-        public static bool Prefix()
-        {
-            return !LevelStartReplay.SuppressEntityRegistration;
-        }
-    }
 }
