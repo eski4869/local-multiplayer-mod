@@ -24,7 +24,7 @@ namespace LocalMultiplayerMod
     /// </summary>
     internal static class MultiplayerRuntime
     {
-        private const int MaximumPlayers = 4;
+        internal const int MaximumPlayers = 4;
 
         private static readonly PlayerContext[] Contexts =
             new PlayerContext[MaximumPlayers];
@@ -132,22 +132,92 @@ namespace LocalMultiplayerMod
         {
             _levelStarted = true;
             _raceComplete = false;
+
+            // Nothing here has a reason to run before the mod dispatch when there
+            // is one player, and running it anyway was not free: it moved the
+            // player's entity registration ahead of every entity the block mods
+            // create in their own hook. Entity order is draw order, so the player
+            // ended up behind SwitchBlocks' platforms and vanished inside the
+            // sand. Measured: player at 1859 with this running, 2180 without,
+            // against switch platforms starting at 1859.
+            //
+            // Single player is left exactly as the base game orders it, and the
+            // guarantee is structural - this is not reached at all rather than
+            // reached and found to have nothing to do. The [OnLevelStart] hook
+            // still builds the context afterwards, which is where it came from
+            // before multiplayer existed.
+            if (!ModEntry.IsMultiplayerEnabled)
+            {
+                return;
+            }
+
             MultiplayerStartPositions.Reset();
             Contexts[0] = CreatePrimaryContext();
-
-            if (ModEntry.IsMultiplayerEnabled)
-            {
-                StartAdditionalPlayers(ModEntry.PlayerCount);
-            }
+            StartAdditionalPlayers(ModEntry.PlayerCount);
         }
 
         /// <summary>
         /// Called right after the base dispatch, to give every additional player
-        /// the same hook the first player just received.
+        /// copies of the block behaviours the first player just received.
         /// </summary>
         public static void AfterModLevelStart()
         {
-            ReplayForAdditionalPlayers();
+            SetUpAdditionalPlayers();
+            RaisePlayersAboveLevelStartEntities();
+        }
+
+        /// <summary>
+        /// Puts the players back on top of everything the mod dispatch created.
+        ///
+        /// Entity order is draw order and later is nearer the viewer;
+        /// <c>MoveToFront</c> moves an entity to the end of the list, and the base
+        /// game never applies it to a player. A player's depth is therefore
+        /// decided by nothing but when it was registered.
+        ///
+        /// Gimmick mods create their world entities inside <c>[OnLevelStart]</c>
+        /// and raise them - SwitchBlocks does this to all of its platforms. So any
+        /// player that already existed when the dispatch ran ends up underneath
+        /// them and disappears inside the sand. On a first load the base game gets
+        /// away with it because the player is registered after the dispatch; on a
+        /// restart the player survives from the previous attempt and is not, which
+        /// is why the same fault is reachable without this mod at all.
+        ///
+        /// This mod makes it certain rather than occasional, because guaranteeing
+        /// the players exist before the dispatch is exactly what its prefix is for.
+        /// Raising them again afterwards restores the depth a first load produces,
+        /// which is what every map was authored against.
+        ///
+        /// Runs for one player as well as several: the ordering has nothing to do
+        /// with how many there are, and single player is where the fault was
+        /// actually reported.
+        /// </summary>
+        private static void RaisePlayersAboveLevelStartEntities()
+        {
+            for (int number = 1; number <= MaximumPlayers; number++)
+            {
+                PlayerContext context = Contexts[number - 1];
+                if (context != null && context.IsAlive)
+                {
+                    context.Player.GoToFront();
+                }
+            }
+
+            // Single player keeps no context of its own until the [OnLevelStart]
+            // hook builds one, and the fault is reported there, so the player is
+            // raised directly rather than through a context that does not exist
+            // yet.
+            if (Contexts[0] == null || !Contexts[0].IsAlive)
+            {
+                EntityManager manager = EntityManager.instance;
+                PlayerEntity player = manager == null
+                    ? null
+                    : manager.Find<PlayerEntity>();
+
+                if (player != null)
+                {
+                    player.GoToFront();
+                }
+            }
         }
 
         public static void OnLevelStart()
@@ -186,7 +256,7 @@ namespace LocalMultiplayerMod
             StartAdditionalPlayers(playerCount);
             // Mid-run change: the mod hooks already ran for the players that
             // existed then, so the new ones need their own pass.
-            ReplayForAdditionalPlayers();
+            SetUpAdditionalPlayers();
         }
 
         public static void FinishRace()
@@ -214,7 +284,39 @@ namespace LocalMultiplayerMod
             return result;
         }
 
-        private static void ReplayForAdditionalPlayers()
+        /// <summary>
+        /// Teleports <paramref name="moverNumber"/> onto <paramref name="targetNumber"/>'s
+        /// position. Both players must be active; a missing player or a player
+        /// gathering onto itself is a no-op.
+        ///
+        /// Screen/offset/seeded are copied alongside the body position rather than
+        /// left for the mover's own <c>CameraFollowComp</c> to catch up next frame -
+        /// the same inheritance an additional player without its own spawn gets
+        /// from player 1 on creation.
+        /// </summary>
+        public static void GatherPlayer(int moverNumber, int targetNumber)
+        {
+            if (moverNumber == targetNumber)
+            {
+                return;
+            }
+
+            PlayerContext mover = GetContext(moverNumber);
+            PlayerContext target = GetContext(targetNumber);
+            if (mover == null || !mover.IsAlive ||
+                target == null || !target.IsAlive)
+            {
+                return;
+            }
+
+            mover.Body.Position = target.Body.Position;
+            mover.Body.Velocity = Vector2.Zero;
+            mover.Screen = target.Screen;
+            mover.Offset = target.Offset;
+            mover.CameraSeeded = target.CameraSeeded;
+        }
+
+        private static void SetUpAdditionalPlayers()
         {
             if (!ModEntry.IsMultiplayerEnabled)
             {
@@ -226,16 +328,16 @@ namespace LocalMultiplayerMod
             for (int i = 0; i < contexts.Count; i++)
             {
                 PlayerContext context = contexts[i];
-                if (context.IsPrimary || context.LevelStartReplayed)
+                if (context.IsPrimary || context.BlockBehavioursApplied)
                 {
                     continue;
                 }
 
-                context.LevelStartReplayed = true;
+                context.BlockBehavioursApplied = true;
                 pending.Add(context);
             }
 
-            LevelStartReplay.Run(pending);
+            PlayerSetup.Run(pending);
         }
 
         private static PlayerContext CreatePrimaryContext()
@@ -438,6 +540,14 @@ namespace LocalMultiplayerMod
             if (context != null)
             {
                 __state = PlayerScope.Enter(context);
+
+                // UpsideDownCore snapshots gravity direction from Controller into
+                // its own fields once per game tick, before any player's physics
+                // runs. Refreshing that snapshot right after installing this
+                // player's scope makes it read this player's own gravity state
+                // rather than whichever player wrote it last.
+                GimmickStateCompat.ResyncUpsideDown();
+                UpsideDownProbe.Sample(context.Number);
             }
         }
 
@@ -470,11 +580,41 @@ namespace LocalMultiplayerMod
         }
     }
 
+    /// <summary>
+    /// Draws every player's own <c>PlayerEntity.Draw</c> call under their own
+    /// identity, regardless of which view is currently being drawn.
+    ///
+    /// This is the one place that reaches every player's draw uniformly. A
+    /// per-view scope (used by the split renderer) only wraps one player's own
+    /// view - so drawing player 1's sprite while it happens to be visible inside
+    /// player 2's viewport left it reading player 2's gravity, the mirror image
+    /// of the additional-player case. Shared mode is worse: it draws the whole
+    /// world, every player included, inside player 1's single scope, so no
+    /// per-view fix reaches it at all - player 2 was always drawn under whichever
+    /// gravity player 1's scope had installed. Fixing it here instead covers
+    /// every case, because <c>EntityManager.Draw</c> calls this for every player
+    /// either way.
+    ///
+    /// The sprite-skin swap stays conditional on being an additional player -
+    /// skins are genuinely that: player 1 uses the base game's own system
+    /// directly and was never part of this.
+    /// </summary>
     internal static class AdditionalPlayerDrawPatch
     {
-        public static void Prefix(PlayerEntity __instance, ref Sprite ___m_sprite)
+        public static void Prefix(
+            PlayerEntity __instance,
+            ref Sprite ___m_sprite,
+            out PlayerScope.Scope __state
+        )
         {
+            __state = default(PlayerScope.Scope);
+
             int playerNumber = MultiplayerRuntime.GetPlayerNumber(__instance);
+            if (playerNumber < 1)
+            {
+                return;
+            }
+
             if (playerNumber > 1)
             {
                 PlayerSpriteFactory.ApplyForDraw(
@@ -483,6 +623,24 @@ namespace LocalMultiplayerMod
                     playerNumber
                 );
             }
+
+            PlayerContext context = MultiplayerRuntime.GetContext(playerNumber);
+            if (context == null)
+            {
+                return;
+            }
+
+            // Identity only - not a full Enter. The camera stays whatever the
+            // enclosing view set, so the sprite is still positioned by that
+            // view's own transform; only per-player state reads, gravity
+            // direction among them, resolve to this player.
+            __state = PlayerScope.EnterIdentityOnly(context);
+            GimmickStateCompat.ResyncUpsideDown();
+        }
+
+        public static void Postfix(PlayerScope.Scope __state)
+        {
+            __state.Dispose();
         }
     }
 
@@ -917,6 +1075,14 @@ namespace LocalMultiplayerMod
             // context, otherwise a scrolling ending would move the player's view.
             using (PlayerScope.Enter(context, false, false))
             {
+                // The scope installs this player's camera but not its gravity
+                // direction, and UpsideDownCore reads the latter while drawing -
+                // the sprite's vertical flip and its offset both come from
+                // Manager.isUpsideDown. Without this, every view is drawn with
+                // whichever player updated last, so an upside-down player and an
+                // upright one cannot both be shown correctly.
+                GimmickStateCompat.ResyncUpsideDown();
+
                 host.StartBatch();
                 _drawingPass = true;
                 LocalMultiplayerApi.SetCurrentViewPlayerMask(playerMask);

@@ -251,16 +251,34 @@ it will appear in views that are not showing that player.
 
 **Per-player level start.** Block mods find "the player" with
 `EntityManager.Find<PlayerEntity>()` inside `[OnLevelStart]` and register their
-behaviours on its `BodyComp`, so they only ever set up player 1. Every player is
-therefore created before that dispatch runs, and the dispatch is then replayed
-once per additional player with the lookup pointed at it. The mod builds real
-behaviours for each player with its own real constructor arguments.
+behaviours on its `BodyComp`, so they only ever set up player 1. Every
+registration made during that dispatch is recorded, and each additional player
+is then given a copy of every recorded behaviour, with any player-typed field
+rebound to that player.
 
-Entity registration and draw-order shuffling are suppressed during a replayed
-pass, which separates a mod's per-player setup (block behaviours, player
-components) from its process-wide setup (singleton drawing and animation
-entities). A mod that needs to tell the difference itself can read
-`IsSecondaryInitPass()`.
+**No mod code is re-run.** An earlier version instead replayed each block mod's
+`[OnLevelStart]` once per player and rolled back the globals it touched. That
+worked, but its correctness was unbounded — what a hook can reach cannot be
+enumerated, so every mod that did something process-wide in its level-start hook
+was a new rollback case to find. Copying an object has nothing to roll back,
+needs no entity or draw-order suppression, and does not depend on mod load
+order. `IsSecondaryInitPass()` remains for compatibility and now always returns
+false: there is no secondary pass.
+
+### Mods that cannot be asked to change
+
+Per-player setup gives each player its own behaviours, but it cannot help a mod
+that keeps per-player state in a static — or that caches one `PlayerEntity` and
+consults it from patches running for every player. Those are corrected at run
+time from `GimmickStateCompat`, without modifying the mod: the patterns, and the
+rules for adding one, are in
+[third-party compatibility](docs/third-party-compatibility.md).
+
+### When something is wrong and the cause is not visible
+
+The mod ships with diagnostic probes, all switched off. Turn one on in the
+settings file, reproduce, and read `crashlog.log` — no rebuild. What each one
+answers, and the rules for writing another, are in [probes](docs/probes.md).
 
 ## Writing a multiplayer-friendly mod
 
@@ -345,7 +363,7 @@ reflectively and fall back to single player when this mod is absent.
 | `GetCurrentPlayer()` | The scoped player, or null outside a scope |
 | `RunAsPlayer(player, action)` | Run an action with that player scoped |
 | `IsPlayerInCurrentView(player)` | Draw only what belongs to the active view |
-| `IsSecondaryInitPass()` | Inside a replayed `[OnLevelStart]` |
+| `IsSecondaryInitPass()` | Always false; kept for compatibility |
 | `IsItemEquipped` / `SetItemEquipped` / `ToggleItem` | Per-player item state |
 | `GetPlayerState` / `SetPlayerState` | Per-player storage |
 
@@ -375,13 +393,18 @@ local pad toggles.
 
 - Some SwitchBlocks switch types do not respond for additional players. Warp,
   one-way and the other gimmick blocks do. Under investigation.
-- A third-party mod that stores per-player state in a static still mixes players
-  up. That can only be fixed in the mod itself, by moving the state onto
-  `GetPlayerState` / `SetPlayerState`.
-- A mod that does process-wide work in `[OnLevelStart]` other than creating
-  entities - loading sounds, registering block factories - repeats that work once
-  per player. Statics it assigns are rolled back after each replayed pass, so the
-  effect is repeated work rather than corrupted state.
+- A third-party mod that stores per-player state in a static mixes players up.
+  Several such mods are corrected from here without changing them - see
+  [third-party compatibility](docs/third-party-compatibility.md) - but each one
+  has to be diagnosed and added by hand, so an undiagnosed mod is still affected.
+  A mod that can be changed should move the state onto
+  `GetPlayerState` / `SetPlayerState` instead.
+- State a third-party mod genuinely shares between players, where two players
+  change what it means rather than corrupting it, cannot be resolved by
+  redirection at all.
+- A behaviour that captures something player-specific in a field the copier
+  cannot recognise as player-typed keeps player 1's copy. The known cases are
+  rebound by name; a new one would need adding.
 
 ## Requirements
 

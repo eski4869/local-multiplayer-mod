@@ -119,58 +119,27 @@ namespace LocalMultiplayerMod
             return _userRouter.Resolve(PlayerCount, user);
         }
 
-        /// <summary>
-        /// Decides whether a mod's <c>[OnLevelStart]</c> is replayed per player.
-        ///
-        /// The default answer is "only if it registered a block behaviour", which
-        /// a mod proves by doing it during the normal dispatch. The two lists are
-        /// escape hatches for the cases that judgement gets wrong.
-        /// </summary>
-        internal static bool ShouldReplayMod(
-            string modName,
-            bool registeredBlockBehaviour
-        )
+        internal static bool WriteSetupManifest
         {
-            EnsurePreferencesLoaded();
-            LevelStartReplayPreferences settings = _preferences.LevelStartReplay;
-
-            if (ContainsModName(settings.NeverReplay, modName))
+            get
             {
-                return false;
+                EnsurePreferencesLoaded();
+                return _preferences.PlayerSetup.WriteManifest;
             }
-
-            if (ContainsModName(settings.AlsoReplay, modName))
-            {
-                return true;
-            }
-
-            return registeredBlockBehaviour;
         }
 
-        private static bool ContainsModName(string list, string modName)
+        /// <summary>
+        /// The diagnostic probes, each off unless the settings file asks for it.
+        /// Read through here rather than from the probes themselves so they stay
+        /// free of settings plumbing and can be deleted in one piece.
+        /// </summary>
+        internal static DiagnosticsPreferences Diagnostics
         {
-            if (string.IsNullOrEmpty(list) || string.IsNullOrEmpty(modName))
+            get
             {
-                return false;
+                EnsurePreferencesLoaded();
+                return _preferences.Diagnostics;
             }
-
-            string[] entries = list.Split(
-                new[] { ';', ',' },
-                StringSplitOptions.RemoveEmptyEntries
-            );
-            for (int i = 0; i < entries.Length; i++)
-            {
-                if (string.Equals(
-                    entries[i].Trim(),
-                    modName,
-                    StringComparison.OrdinalIgnoreCase
-                ))
-                {
-                    return true;
-                }
-            }
-
-            return false;
         }
 
         internal static void ProcessBrokerCommand()
@@ -184,17 +153,26 @@ namespace LocalMultiplayerMod
                 return;
             }
 
-            string user;
             string command;
-            if (!parameters.TryGetValue("user", out user) ||
-                !parameters.TryGetValue("command", out command))
+            if (!parameters.TryGetValue("command", out command))
             {
                 return;
             }
 
             command = (command ?? string.Empty).Trim().ToLowerInvariant();
+
+            int moverNumber;
+            int targetNumber;
+            if (GatherCommand.TryParse(command, out moverNumber, out targetNumber))
+            {
+                MultiplayerRuntime.GatherPlayer(moverNumber, targetNumber);
+                return;
+            }
+
+            string user;
             if (command.Length != 2 || command[0] != 'p' ||
-                command[1] < '1' || command[1] > '4')
+                command[1] < '1' || command[1] > '4' ||
+                !parameters.TryGetValue("user", out user))
             {
                 return;
             }
@@ -440,18 +418,6 @@ namespace LocalMultiplayerMod
             );
             complete &= TryPatch(
                 harmony,
-                AccessTools.Method(typeof(EntityManager), "AddObject"),
-                typeof(EntityManagerAddObjectPatch),
-                "EntityManager.AddObject"
-            );
-            complete &= TryPatch(
-                harmony,
-                AccessTools.Method(typeof(EntityManager), "MoveToFront"),
-                typeof(EntityManagerMoveToFrontPatch),
-                "EntityManager.MoveToFront"
-            );
-            complete &= TryPatch(
-                harmony,
                 AccessTools.Method(
                     typeof(BodyComp),
                     "RegisterBlockBehaviour",
@@ -513,6 +479,13 @@ namespace LocalMultiplayerMod
                 "EndingManager.CheckWin"
             );
 
+            // After the base patches, and safe here because mod assemblies are
+            // loaded before [BeforeLevelLoad] runs: this one looks other mods up
+            // by name.
+            GimmickStateCompat.Install(harmony);
+            TeleportProbe.Install(harmony);
+            JumpProbe.Install(harmony);
+
             _harmony = harmony;
             if (!complete)
             {
@@ -535,6 +508,7 @@ namespace LocalMultiplayerMod
             string description
         )
         {
+
             if (target == null)
             {
                 JumpKing.Program.crashLog.AddErrorMessage(
@@ -708,9 +682,11 @@ namespace LocalMultiplayerMod
                 preferences.FourPlayerMode.EnsureInitialized();
             }
 
-            if (preferences.LevelStartReplay == null)
+            // A settings file written before this section existed has no
+            // Diagnostics element, and every probe reads through it.
+            if (preferences.Diagnostics == null)
             {
-                preferences.LevelStartReplay = new LevelStartReplayPreferences();
+                preferences.Diagnostics = new DiagnosticsPreferences();
             }
         }
 
@@ -739,6 +715,16 @@ namespace LocalMultiplayerMod
         {
             PlayerScope.ResetIfLeaked();
             ModEntry.ProcessBrokerCommand();
+
+            if (MultiplayerRuntime.IsActive)
+            {
+                for (int number = 1; number <= MultiplayerRuntime.PlayerCount; number++)
+                {
+                    PlayerContext context = MultiplayerRuntime.GetContext(number);
+                    ScreenTrackingProbe.Sample(number, context);
+                    JumpProbe.SamplePeak(number, context);
+                }
+            }
         }
     }
 
@@ -747,21 +733,24 @@ namespace LocalMultiplayerMod
     ///
     /// The prefix creates every additional player first, because block mods look
     /// up "the player" inside that hook and register their behaviours on its body
-    /// - if the player does not exist yet, it never gets them. The postfix then
-    /// runs the same dispatch once per additional player so each one is set up by
-    /// the mod itself rather than by cloning the first player's behaviours.
+    /// - if the player does not exist yet, it never gets them. It also creates
+    /// player 1's context, which is what lets registrations be recorded as they
+    /// happen.
+    ///
+    /// The postfix then hands the additional players the same set, by whichever
+    /// mechanism <see cref="PlayerSetup"/> is configured for.
     /// </summary>
     internal static class ModLevelStartDispatchPatch
     {
         public static void Prefix()
         {
-            LevelStartReplay.BeginBaseDispatch();
+            BlockBehaviourRecorder.BeginDispatch();
             MultiplayerRuntime.BeforeModLevelStart();
         }
 
         public static void Postfix()
         {
-            LevelStartReplay.EndBaseDispatch();
+            BlockBehaviourRecorder.EndDispatch();
             MultiplayerRuntime.AfterModLevelStart();
         }
     }
@@ -778,23 +767,72 @@ namespace LocalMultiplayerMod
             new MultiplayerModePreferences();
         public FourPlayerModePreferences FourPlayerMode { get; set; } =
             new FourPlayerModePreferences();
-        public LevelStartReplayPreferences LevelStartReplay { get; set; } =
-            new LevelStartReplayPreferences();
+        public PlayerSetupPreferences PlayerSetup { get; set; } =
+            new PlayerSetupPreferences();
+        public DiagnosticsPreferences Diagnostics { get; set; } =
+            new DiagnosticsPreferences();
     }
 
     /// <summary>
-    /// Overrides for which mods get their <c>[OnLevelStart]</c> replayed per
-    /// player. Both are semicolon-separated mod names as they appear in
-    /// <c>ModLoadLog.txt</c>, and both are normally empty: a mod qualifies by
-    /// registering a block behaviour, which needs no configuration.
+    /// The probes. Each answers one question about a mechanism that cannot be
+    /// inspected from outside the running game, and each is silent unless asked
+    /// for.
+    ///
+    /// They stay in the build rather than being added when a symptom appears,
+    /// because the symptoms that need them are the ones that are hard to
+    /// reproduce on demand - by the time a probe has been written, compiled and
+    /// deployed, the run that showed the fault is gone. Shipping them switched
+    /// off costs one boolean read per sample.
+    ///
+    /// Off by default, and deliberately not exposed in the pause menu: these
+    /// write to the crash log every time their answer changes, which is a
+    /// developer's tool and not a player's setting.
     /// </summary>
-    public class LevelStartReplayPreferences
+    public class DiagnosticsPreferences
     {
-        /// <summary>Replay these even though they registered no block behaviour.</summary>
-        public string AlsoReplay { get; set; } = string.Empty;
+        /// <summary>
+        /// Whether <c>PlayerContext.Screen</c> - the screen collision resolves
+        /// against for a player who is not the global camera - has drifted from
+        /// the screen that player's own position falls on.
+        ///
+        /// <c>GetCollisionInfo</c> only searches the tracked screen plus or minus
+        /// one, so a drift of two or more means no ground is found at all. That
+        /// reads in play as a player falling through the world.
+        /// </summary>
+        public bool ScreenTracking { get; set; } = false;
 
-        /// <summary>Never replay these, whatever they registered.</summary>
-        public string NeverReplay { get; set; } = string.Empty;
+        /// <summary>
+        /// What the base game's screen teleport resolves, per player, at the
+        /// moment it fires: the camera's screen, the screen the body is really
+        /// on, the teleport links found, and the move that resulted.
+        /// </summary>
+        public bool Teleport { get; set; } = false;
+
+        /// <summary>
+        /// What the upside-down gravity resync produced, so a fix that is broken
+        /// and a fix that never installed can be told apart.
+        /// </summary>
+        public bool UpsideDown { get; set; } = false;
+
+        /// <summary>
+        /// Every jump as it launches - intensity, the velocity it leaves with,
+        /// and how far it rose - plus how many other players were mid-charge at
+        /// the time. One line per jump, so this is quiet enough to leave on.
+        /// </summary>
+        public bool Jump { get; set; } = false;
+    }
+
+    /// <summary>
+    /// How the additional players are given player 1's block behaviours, and
+    /// whether the result is written out for inspection.
+    /// </summary>
+    public class PlayerSetupPreferences
+    {
+        /// <summary>
+        /// Write what each player's body actually holds to a text file beside the
+        /// settings. Off by default; the point of it is comparing two runs.
+        /// </summary>
+        public bool WriteManifest { get; set; } = false;
     }
 
     public class SingleModePreferences

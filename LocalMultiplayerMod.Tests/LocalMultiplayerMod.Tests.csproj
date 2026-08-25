@@ -14,6 +14,8 @@
     <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="..\ObjectCopier.cs" Link="ObjectCopier.cs" />
     <Compile Include="..\UserCommandRouting.cs" Link="UserCommandRouting.cs" />
+    <Compile Include="..\GatherCommand.cs" Link="GatherCommand.cs" />
   </ItemGroup>
 </Project>
