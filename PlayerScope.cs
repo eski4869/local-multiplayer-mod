@@ -42,6 +42,7 @@ namespace LocalMultiplayerMod
         private static readonly int[] SavedScreens = new int[MaximumDepth];
         private static readonly Vector2[] SavedOffsets = new Vector2[MaximumDepth];
         private static readonly bool[] WriteBack = new bool[MaximumDepth];
+        private static readonly bool[] IdentityOnly = new bool[MaximumDepth];
         private static int _depth;
 
         /// <summary>
@@ -223,6 +224,34 @@ namespace LocalMultiplayerMod
         /// more cannot be produced by that lag, so it is the signature of
         /// somebody having moved the player rather than of the camera trailing.
         /// </summary>
+        /// <summary>
+        /// Pushes only enough for <see cref="Current" /> to resolve to
+        /// <paramref name="context" />, without touching the camera at all.
+        ///
+        /// Shared view composites every player through player 1's camera, so a
+        /// full <see cref="Enter(PlayerContext)" /> while drawing player 2's own
+        /// sprite would misplace it - the whole point of that mode is drawing
+        /// everyone through one camera. But gravity direction is read through
+        /// <see cref="Current" /> too, by the same accessor redirects that make
+        /// per-player switch state work, and that value has nothing to do with
+        /// where the camera is pointed. This is for exactly that split: identify
+        /// the player for state reads that do not depend on position, while
+        /// position stays whatever the enclosing view's own scope already set.
+        /// </summary>
+        public static Scope EnterIdentityOnly(PlayerContext context)
+        {
+            if (context == null || _depth >= MaximumDepth)
+            {
+                return new Scope(false, false);
+            }
+
+            IdentityOnly[_depth] = true;
+            Stack[_depth] = context;
+            _depth++;
+
+            return new Scope(true, false);
+        }
+
         private static void ReconcileWithPosition(PlayerContext context)
         {
             BodyComp body = context.Body;
@@ -257,6 +286,21 @@ namespace LocalMultiplayerMod
             _depth--;
             PlayerContext context = Stack[_depth];
             Stack[_depth] = null;
+
+            if (IdentityOnly[_depth])
+            {
+                // Never touched Saved*/the camera field on the way in, so there
+                // is nothing to restore - falling through to the camera logic
+                // below would write back whatever stale values happen to sit in
+                // those arrays at this depth.
+                IdentityOnly[_depth] = false;
+                if (clearRedirect)
+                {
+                    RedirectPrimaryPlayer = false;
+                }
+
+                return;
+            }
 
             bool writeBack = WriteBack[_depth];
             if (context != null && writeBack)

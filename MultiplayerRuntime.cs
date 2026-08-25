@@ -580,11 +580,41 @@ namespace LocalMultiplayerMod
         }
     }
 
+    /// <summary>
+    /// Draws every player's own <c>PlayerEntity.Draw</c> call under their own
+    /// identity, regardless of which view is currently being drawn.
+    ///
+    /// This is the one place that reaches every player's draw uniformly. A
+    /// per-view scope (used by the split renderer) only wraps one player's own
+    /// view - so drawing player 1's sprite while it happens to be visible inside
+    /// player 2's viewport left it reading player 2's gravity, the mirror image
+    /// of the additional-player case. Shared mode is worse: it draws the whole
+    /// world, every player included, inside player 1's single scope, so no
+    /// per-view fix reaches it at all - player 2 was always drawn under whichever
+    /// gravity player 1's scope had installed. Fixing it here instead covers
+    /// every case, because <c>EntityManager.Draw</c> calls this for every player
+    /// either way.
+    ///
+    /// The sprite-skin swap stays conditional on being an additional player -
+    /// skins are genuinely that: player 1 uses the base game's own system
+    /// directly and was never part of this.
+    /// </summary>
     internal static class AdditionalPlayerDrawPatch
     {
-        public static void Prefix(PlayerEntity __instance, ref Sprite ___m_sprite)
+        public static void Prefix(
+            PlayerEntity __instance,
+            ref Sprite ___m_sprite,
+            out PlayerScope.Scope __state
+        )
         {
+            __state = default(PlayerScope.Scope);
+
             int playerNumber = MultiplayerRuntime.GetPlayerNumber(__instance);
+            if (playerNumber < 1)
+            {
+                return;
+            }
+
             if (playerNumber > 1)
             {
                 PlayerSpriteFactory.ApplyForDraw(
@@ -593,6 +623,24 @@ namespace LocalMultiplayerMod
                     playerNumber
                 );
             }
+
+            PlayerContext context = MultiplayerRuntime.GetContext(playerNumber);
+            if (context == null)
+            {
+                return;
+            }
+
+            // Identity only - not a full Enter. The camera stays whatever the
+            // enclosing view set, so the sprite is still positioned by that
+            // view's own transform; only per-player state reads, gravity
+            // direction among them, resolve to this player.
+            __state = PlayerScope.EnterIdentityOnly(context);
+            GimmickStateCompat.ResyncUpsideDown();
+        }
+
+        public static void Postfix(PlayerScope.Scope __state)
+        {
+            __state.Dispose();
         }
     }
 
