@@ -15,6 +15,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="..\ObjectCopier.cs" Link="ObjectCopier.cs" />
+    <Compile Include="..\StateSnapshot.cs" Link="StateSnapshot.cs" />
     <Compile Include="..\UserCommandRouting.cs" Link="UserCommandRouting.cs" />
     <Compile Include="..\GatherCommand.cs" Link="GatherCommand.cs" />
   </ItemGroup>

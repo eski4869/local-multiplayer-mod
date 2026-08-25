@@ -79,6 +79,8 @@
 		<Compile Include="PlayerScope.cs" />
 		<Compile Include="ScopedFieldStore.cs" />
 		<Compile Include="PlayerSetup.cs" />
+		<Compile Include="PlayerSnapshot.cs" />
+		<Compile Include="StateSnapshot.cs" />
 		<Compile Include="PlayerSetupManifest.cs" />
 		<Compile Include="PlayerSkinComposer.cs" />
 		<Compile Include="PlayerSpriteFactory.cs" />
