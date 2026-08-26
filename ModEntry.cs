@@ -392,6 +392,12 @@ namespace LocalMultiplayerMod
                 typeof(NetplaySetPausePatch),
                 "PauseManager.SetPause"
             );
+            complete &= TryPatch(
+                harmony,
+                AccessTools.Method(typeof(EntityManager), "Update"),
+                typeof(NetplayStallPatch),
+                "EntityManager.Update"
+            );
 
             // Broker polling.
             complete &= TryPatch(
@@ -820,6 +826,25 @@ namespace LocalMultiplayerMod
     /// property, and the game is built to be paused this way. Reporting the peer's
     /// pause through it borrows all of that, menus included.
     /// </summary>
+    /// <summary>
+    /// Holds the world still for the frames this machine is waiting out.
+    ///
+    /// The session decides to wait; this is what makes waiting mean anything. Both
+    /// have to happen together - a frame that is not counted must also not be
+    /// simulated, or the local player is handed the previous frame's input again
+    /// and their own king moves on a repeat of what they last pressed.
+    ///
+    /// The re-simulation drives this same method directly, and must not be blocked
+    /// by it: that pass is catching up, not waiting.
+    /// </summary>
+    internal static class NetplayStallPatch
+    {
+        public static bool Prefix()
+        {
+            return !ModEntry.Netplay.IsStalling || Resimulation.IsActive;
+        }
+    }
+
     internal static class NetplayPausePatch
     {
         public static void Postfix(ref bool __result)

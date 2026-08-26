@@ -487,6 +487,11 @@ namespace LocalMultiplayerMod
             _lastAppliedRemote = -1;
             _startFrame = -1;
             _peerFrame = -1;
+
+            // Left set, this would hold the world still after the session that
+            // justified it has gone.
+            _stallThisFrame = false;
+            _consecutiveStalls = 0;
             _peerPaused = false;
             RequiredLevelId = null;
             _localInputs.Reset();
@@ -501,6 +506,12 @@ namespace LocalMultiplayerMod
         /// </summary>
         public void BeforeGameUpdate(float delta)
         {
+            // Cleared before anything can return early. Every path out of here
+            // still reaches EntityManager.Update afterwards, so a flag left set
+            // from an earlier frame would hold the world still on a frame that was
+            // never asked to wait - including after the session has ended.
+            _stallThisFrame = false;
+
             if (_phase == Phase.Idle || _phase == Phase.Refused)
             {
                 return;
@@ -553,8 +564,23 @@ namespace LocalMultiplayerMod
             // whatever they last pressed.
             //
             // A player will forgive the other one stuttering. Their own controls
-            // coming apart is the one thing they will not, so this is out until it
-            // can hold the simulation rather than the counting around it.
+            // coming apart is the one thing they will not.
+            //
+            // So it holds the simulation as well, through NetplayStallPatch, and
+            // the two happen together: no frame advances and no frame is
+            // simulated. The game is fixed-timestep - every update is exactly one
+            // sixtieth of a second of game time whatever the hardware manages - so
+            // frame N is the same state on both machines and a slower one only
+            // arrives there later. Nothing about the simulation differs with the
+            // hardware; only when each machine reaches it does, and the one in
+            // front waiting is the only thing that closes that.
+            _stallThisFrame = ShouldWaitForPeer();
+            if (_stallThisFrame)
+            {
+                _stallReport++;
+                return;
+            }
+
             _frame++;
             _clock.NoteSimulatedFrame();
             CaptureLocalInput();
@@ -1560,6 +1586,54 @@ namespace LocalMultiplayerMod
         private long _peerFrame = -1;
 
         private int _stallReport;
+        private int _consecutiveStalls;
+
+        /// <summary>
+        /// True while this machine's own frame should not advance and the world
+        /// should not be simulated.
+        /// </summary>
+        public bool IsStalling
+        {
+            get { return _stallThisFrame; }
+        }
+
+        private bool _stallThisFrame;
+
+        /// <summary>
+        /// Whether this machine is far enough in front of the peer to wait a frame.
+        /// </summary>
+        private bool ShouldWaitForPeer()
+        {
+            if (_peerFrame < 0 || _frame - _peerFrame <= MaxFrameAdvantage)
+            {
+                _consecutiveStalls = 0;
+                return false;
+            }
+
+            // A peer that has genuinely stopped - alt-tabbed, hitched, gone - must
+            // not freeze this game indefinitely. Past this the gap is accepted and
+            // the guessing resumes; whether to leave is the player's call, not
+            // something to decide by stalling for ever.
+            if (_consecutiveStalls >= MaxStallFrames)
+            {
+                return false;
+            }
+
+            _consecutiveStalls++;
+            return true;
+        }
+
+        /// <summary>
+        /// How far in front of the peer this machine may get before it waits.
+        ///
+        /// Not zero: the two are never exactly level, and stopping on every frame
+        /// of ordinary jitter would cost more than the gap does. Wide enough to
+        /// absorb that, narrow enough that the guessing stays short.
+        /// </summary>
+        private const int MaxFrameAdvantage = 6;
+
+        /// <summary>Half a second. Past it the peer is treated as stopped.</summary>
+        private const int MaxStallFrames = 30;
 
         /// <summary>
         /// Refuses the session, saying why. The reason is the whole point: a
