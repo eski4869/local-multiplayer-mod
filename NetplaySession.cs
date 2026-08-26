@@ -926,21 +926,24 @@ namespace LocalMultiplayerMod
                 return;
             }
 
-            if (!RestoreAll(from))
-            {
-                NetplayNotice.Show("desynchronised - could not rewind");
-                _lastAppliedRemote = confirmed;
-                return;
-            }
-
-            // Bounded so one bad stretch cannot stall the game outright. Past this
-            // the correction is abandoned and the drift reported, which is worse
-            // than a rollback and much better than a frame that takes a second.
+            // Checked before anything is rewound, not after. Abandoning the
+            // correction below the restore left the world rewound to a frame that
+            // was then never replayed: the players were dragged back through
+            // however many frames of their own movement and simply left there,
+            // which is what "無理やり引き戻される" was. Give up before touching
+            // anything, or not at all.
             if (_frame - from > MaxRollbackFrames)
             {
                 NetplayNotice.Show(
                     "correction skipped - " + (_frame - from) + " frames behind"
                 );
+                _lastAppliedRemote = confirmed;
+                return;
+            }
+
+            if (!RestoreAll(from))
+            {
+                NetplayNotice.Show("desynchronised - could not rewind");
                 _lastAppliedRemote = confirmed;
                 return;
             }
@@ -1388,13 +1391,27 @@ namespace LocalMultiplayerMod
 
         private bool RestoreAll(long frame)
         {
-            for (int number = 1; number <= MultiplayerRuntime.PlayerCount; number++)
+            // Gathered before any of it is applied. Restoring as it went meant a
+            // player missing a snapshot left the ones before it already rewound and
+            // the ones after it in the present - half a world in the past, and the
+            // caller told only that it failed.
+            int count = MultiplayerRuntime.PlayerCount;
+            var contexts = new PlayerContext[count + 1];
+            var snapshots = new PlayerSnapshot[count + 1];
+
+            for (int number = 1; number <= count; number++)
             {
-                PlayerContext context = MultiplayerRuntime.GetContext(number);
-                PlayerSnapshot snapshot;
-                if (context == null ||
-                    !_rollback.TryGet(number, frame, out snapshot) ||
-                    !snapshot.Restore(context))
+                contexts[number] = MultiplayerRuntime.GetContext(number);
+                if (contexts[number] == null ||
+                    !_rollback.TryGet(number, frame, out snapshots[number]))
+                {
+                    return false;
+                }
+            }
+
+            for (int number = 1; number <= count; number++)
+            {
+                if (!snapshots[number].Restore(contexts[number]))
                 {
                     return false;
                 }

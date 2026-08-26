@@ -205,8 +205,69 @@ namespace LocalMultiplayerMod
             roots.Add(player);
 
             AddBehaviourTree(player, roots);
+            AddBodyBehaviours(roots);
             AddOwnedObjects(roots);
             return roots;
+        }
+
+        /// <summary>
+        /// Every behaviour hanging off this player's <c>BodyComp</c> - the block
+        /// behaviours and the body-comp behaviours both.
+        ///
+        /// <c>BodyComp</c> is already a root, but its behaviours are not reached
+        /// from it: they are held in a <c>LinkedList</c> and a <c>Dictionary</c>,
+        /// and the capture follows neither. So the whole set survived a rollback
+        /// untouched, and that is not a gap at the edge of the state - it is the
+        /// determinism the rollback rests on. Replaying a frame only returns the
+        /// same answer if everything the frame reads has been put back, and these
+        /// are read on every collision.
+        ///
+        /// <c>IsPlayerOnBlock</c> alone would justify it: it is a settable member
+        /// of <c>IBlockBehaviour</c> written per frame by the body, so every
+        /// behaviour carries per-frame mutable state whether its author added any
+        /// or not. Gimmick mods add plenty more - the sand a player is sinking
+        /// into, a switch part-way through flipping - and the per-player clones of
+        /// those are what these lists actually hold.
+        ///
+        /// Walked rather than listed, for the same reason the tree is: a behaviour
+        /// type nobody here has heard of is covered anyway. Bounded by
+        /// construction - the lists are built at setup and not added to in play.
+        /// </summary>
+        private static void AddBodyBehaviours(List<object> roots)
+        {
+            // Snapshotted from the roots gathered so far, because BodyComp is
+            // already among them and finding it again by type would just be the
+            // same object twice.
+            int upTo = roots.Count;
+            for (int i = 0; i < upTo; i++)
+            {
+                object root = roots[i];
+                if (!(root is BodyComp))
+                {
+                    continue;
+                }
+
+                AddEnumerable(root, "m_blockBehaviours", roots);
+                AddEnumerable(root, "m_behaviours", roots);
+            }
+        }
+
+        private static void AddEnumerable(object owner, string field, List<object> roots)
+        {
+            FieldInfo info = AccessTools.Field(owner.GetType(), field);
+            var items = info == null ? null : info.GetValue(owner) as System.Collections.IEnumerable;
+            if (items == null)
+            {
+                return;
+            }
+
+            foreach (object item in items)
+            {
+                if (item != null && !roots.Contains(item))
+                {
+                    roots.Add(item);
+                }
+            }
         }
 
         /// <summary>
