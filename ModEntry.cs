@@ -69,9 +69,50 @@ namespace LocalMultiplayerMod
         {
             get
             {
+                if (_netplayPlayerCount > 0)
+                {
+                    return _netplayPlayerCount;
+                }
+
                 EnsurePreferencesLoaded();
                 return _preferences.PlayerCount;
             }
+        }
+
+        /// <summary>
+        /// The player count a netplay session imposes while it lasts, or zero.
+        ///
+        /// A session is a thing that starts and ends; the preference is what the
+        /// player chose for this machine. Netplay used to express itself by writing
+        /// the preference, which saves to disk - so closing the window with the
+        /// × during a session left two players configured, and the game came back
+        /// in offline two-player next launch. There is no teardown that can fix
+        /// that, because closing the window does not run one.
+        ///
+        /// So the session never touches what the player chose. It overrides it for
+        /// as long as it is running, the override lives only in memory, and
+        /// whatever they had picked is still there when it ends - including when it
+        /// "ends" by the process going away.
+        /// </summary>
+        private static int _netplayPlayerCount;
+
+        private static TwoPlayerLayout _netplayLayout;
+
+        /// <summary>
+        /// Imposes a player count for the duration of a netplay session, or lifts
+        /// it again with a count of zero. Never saved.
+        /// </summary>
+        internal static void SetNetplayPlayerMode(int playerCount, TwoPlayerLayout layout)
+        {
+            if (_netplayPlayerCount == playerCount &&
+                (playerCount == 0 || _netplayLayout == layout))
+            {
+                return;
+            }
+
+            _netplayPlayerCount = playerCount;
+            _netplayLayout = layout;
+            MultiplayerRuntime.SetPlayerCount(PlayerCount);
         }
 
         internal static bool IsMultiplayerEnabled
@@ -84,6 +125,11 @@ namespace LocalMultiplayerMod
         {
             get
             {
+                if (_netplayPlayerCount > 0)
+                {
+                    return _netplayLayout;
+                }
+
                 EnsurePreferencesLoaded();
                 return _preferences.TwoPlayerLayout;
             }

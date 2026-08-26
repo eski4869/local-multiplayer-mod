@@ -232,20 +232,18 @@ namespace LocalMultiplayerMod
         /// screen before anything is connected - which says the session has started
         /// when it has not. The body appears when somebody is actually driving it.
         ///
-        /// Changing the player count mid-run is an ordinary operation here: the
-        /// pause menu has always been able to turn local multiplayer on during a
-        /// run, and this is the same path.
+        /// Imposed for the session's lifetime rather than written to the player's
+        /// settings. What they chose for this machine is theirs, and a session
+        /// borrowing that field to say "two people are playing right now" is what
+        /// left the game in offline two-player after a session ended by closing the
+        /// window - there is no teardown to undo it on that path, so there must be
+        /// nothing to undo.
         /// </summary>
         private void SetSecondPlayerPresent(bool present)
         {
-            if (present == ModEntry.IsMultiplayerEnabled)
-            {
-                return;
-            }
-
-            ModEntry.SetPlayerMode(
-                present ? 2 : 1,
-                present ? TwoPlayerLayout.Shared : ModEntry.TwoPlayerLayout
+            ModEntry.SetNetplayPlayerMode(
+                present ? 2 : 0,
+                TwoPlayerLayout.Shared
             );
         }
 
