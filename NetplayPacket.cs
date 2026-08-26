@@ -38,7 +38,29 @@ namespace LocalMultiplayerMod
             Pause = 3,
 
             /// <summary>I have resumed.</summary>
-            Resume = 4
+            Resume = 4,
+
+            /// <summary>
+            /// The host declaring where the session begins.
+            ///
+            /// Two machines cannot share a simulation they did not start from the
+            /// same state, and rollback cannot rescue that: it replays from a
+            /// snapshot, so a snapshot that was already wrong stays wrong however
+            /// often it is replayed. Each side placing the players wherever it
+            /// happened to be looks like drift with no correction, and is really
+            /// two different worlds that never agreed.
+            /// </summary>
+            Start = 5,
+
+            /// <summary>
+            /// A digest of the simulation at a frame, for spotting divergence.
+            ///
+            /// Determinism is a claim, and an unchecked one fails quietly - by the
+            /// time two positions differ visibly they have been differing for a
+            /// while. Comparing a number every so often turns that into something
+            /// with a frame attached to it.
+            /// </summary>
+            Checksum = 6
         }
 
         /// <summary>Largest packet this protocol produces.</summary>
@@ -164,6 +186,101 @@ namespace LocalMultiplayerMod
             return true;
         }
 
+        /// <summary>
+        /// Where the session begins, as the host sees it.
+        /// </summary>
+        /// <remarks>
+        /// The coordinates cross as raw IEEE-754 bits rather than text, so both
+        /// machines hold the identical value. The design's rule against float in
+        /// the sync path is about a value that would be re-derived every frame from
+        /// something that had been through a decimal round trip; this is agreed
+        /// once, exactly, and then never sent again.
+        /// </remarks>
+        public static int WriteStart(byte[] buffer, long frame, float x, float y)
+        {
+            if (buffer == null || buffer.Length < 13)
+            {
+                return 0;
+            }
+
+            buffer[0] = (byte)Kind.Start;
+            WriteUInt32(buffer, 1, (uint)frame);
+            WriteUInt32(buffer, 5, ToBits(x));
+            WriteUInt32(buffer, 9, ToBits(y));
+            return 13;
+        }
+
+        public static bool ReadStart(
+            byte[] buffer,
+            int length,
+            out long frame,
+            out float x,
+            out float y
+        )
+        {
+            frame = 0;
+            x = 0f;
+            y = 0f;
+            if (buffer == null || length < 13 || buffer[0] != (byte)Kind.Start)
+            {
+                return false;
+            }
+
+            frame = ReadUInt32(buffer, 1);
+            x = FromBits(ReadUInt32(buffer, 5));
+            y = FromBits(ReadUInt32(buffer, 9));
+            return true;
+        }
+
+        public static int WriteChecksum(byte[] buffer, long frame, uint digest)
+        {
+            if (buffer == null || buffer.Length < 9)
+            {
+                return 0;
+            }
+
+            buffer[0] = (byte)Kind.Checksum;
+            WriteUInt32(buffer, 1, (uint)frame);
+            WriteUInt32(buffer, 5, digest);
+            return 9;
+        }
+
+        public static bool ReadChecksum(
+            byte[] buffer,
+            int length,
+            out long frame,
+            out uint digest
+        )
+        {
+            frame = 0;
+            digest = 0;
+            if (buffer == null || length < 9 || buffer[0] != (byte)Kind.Checksum)
+            {
+                return false;
+            }
+
+            frame = ReadUInt32(buffer, 1);
+            digest = ReadUInt32(buffer, 5);
+            return true;
+        }
+
+        /// <summary>
+        /// The float's exact bits, so both machines hold the identical value.
+        ///
+        /// <see cref="BitConverter"/> rather than a pointer cast: it needs no
+        /// unsafe context, which would otherwise have to be enabled for every
+        /// project that compiles this file, including the test one.
+        /// </summary>
+        private static uint ToBits(float value)
+        {
+            return (uint)BitConverter.ToInt32(BitConverter.GetBytes(value), 0);
+        }
+
+        private static float FromBits(uint bits)
+        {
+            return BitConverter.ToSingle(BitConverter.GetBytes(bits), 0);
+        }
+
         public static int WriteControl(byte[] buffer, Kind kind)
         {
             if (buffer == null || buffer.Length < 1 ||
@@ -185,7 +302,7 @@ namespace LocalMultiplayerMod
             }
 
             byte raw = buffer[0];
-            if (raw < (byte)Kind.Hello || raw > (byte)Kind.Resume)
+            if (raw < (byte)Kind.Hello || raw > (byte)Kind.Checksum)
             {
                 return false;
             }

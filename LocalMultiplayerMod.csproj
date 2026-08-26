@@ -79,6 +79,8 @@
 		<Compile Include="Resimulation.cs" />
 		<Compile Include="RollbackBuffer.cs" />
 		<Compile Include="NetplayLevelIdentity.cs" />
+		<Compile Include="NetplayNameTags.cs" />
+		<Compile Include="NetplayNotice.cs" />
 		<Compile Include="NetplayPacket.cs" />
 		<Compile Include="NetplayTransport.cs" />
 		<Compile Include="ObjectCopier.cs" />

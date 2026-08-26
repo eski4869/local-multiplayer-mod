@@ -62,6 +62,33 @@ namespace LocalMultiplayerMod
         }
 
         /// <summary>
+        /// The level's folder name - for a workshop map, its item id.
+        ///
+        /// Carried alongside the hash because the hash cannot be acted on. A joiner
+        /// told "the host is on a different level" can do nothing with that; told
+        /// the id, they can find it in their subscriptions. The hash stays the
+        /// thing that decides, since an item updates in place and two people can
+        /// hold different content under one id.
+        /// </summary>
+        public static string CurrentId
+        {
+            get
+            {
+                string root = Game1.instance == null ||
+                    Game1.instance.contentManager == null
+                        ? null
+                        : Game1.instance.contentManager.root;
+
+                if (string.IsNullOrEmpty(root))
+                {
+                    return null;
+                }
+
+                return Path.GetFileName(root.TrimEnd('\\', '/'));
+            }
+        }
+
+        /// <summary>
         /// Recomputes on the next read. Called when a level is loaded, because the
         /// content root can be reused for a map that has since been updated.
         /// </summary>

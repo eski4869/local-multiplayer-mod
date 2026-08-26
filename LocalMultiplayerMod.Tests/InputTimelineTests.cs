@@ -224,6 +224,50 @@ namespace LocalMultiplayerMod.Tests
         }
 
         [TestMethod]
+        public void JoiningLateLeavesAHoleNothingCanFill()
+        {
+            var sender = new InputTimeline();
+            var receiver = new InputTimeline();
+            var buffer = new byte[InputTimeline.PacketFrames];
+
+            for (int frame = 0; frame <= 40; frame++)
+            {
+                sender.Record(frame, Jump);
+            }
+
+            // Only the newest packet is heard, as it would be by a receiver that
+            // started listening at frame forty.
+            receiver.Receive(40, buffer, sender.BuildPacket(buffer));
+
+            // Confirmation is contiguity from the beginning, so the missing
+            // opening frames hold it at -1 permanently. Anything that only acts
+            // when the confirmed frame advances - the rollback did - then never
+            // acts at all, for the rest of the session.
+            //
+            // Which is why the session records remote input from the moment it
+            // arrives rather than discarding it until the origin is settled.
+            Assert.AreEqual(-1, receiver.ConfirmedThrough);
+            Assert.AreEqual(40, receiver.HighestKnown);
+        }
+
+        [TestMethod]
+        public void ConfirmedRunsPastAMachineThatIsBehind()
+        {
+            var timeline = new InputTimeline();
+            for (int frame = 0; frame <= 40; frame++)
+            {
+                timeline.Record(frame, Jump);
+            }
+
+            // A machine simulating frame ten holds confirmed input up to forty:
+            // the packets describe frames it has not reached. A marker for "how
+            // far the guesses have been checked" must be held to the current
+            // frame rather than following this, or every misprediction at the
+            // present falls below the mark and is never examined again.
+            Assert.AreEqual(40, timeline.ConfirmedThrough);
+        }
+
+        [TestMethod]
         public void ResetClearsEverything()
         {
             InputTimeline timeline = Filled(10, Jump);

@@ -87,7 +87,7 @@ namespace LocalMultiplayerMod
             {
                 try
                 {
-                    values[i] = fields[i].GetValue(target);
+                    values[i] = CaptureValue(fields[i].GetValue(target));
                 }
                 catch
                 {
@@ -98,6 +98,53 @@ namespace LocalMultiplayerMod
             }
 
             return values;
+        }
+
+        /// <summary>
+        /// An array of value types is copied rather than referenced.
+        ///
+        /// The rule elsewhere is that references are stored as references, because
+        /// following them reaches the whole world. An array of primitives or
+        /// structs is the exception worth carving out: it holds no references of
+        /// its own to follow, it is almost always private working state of the
+        /// object that declares it, and leaving it shared makes a restore silently
+        /// incomplete.
+        ///
+        /// That silence is what this cost. <c>JumpState</c> keeps the last four
+        /// input states in a buffer and uses them to recover the direction when a
+        /// key was released just before takeoff. Restoring the timer but not the
+        /// buffer left a jump reading directions from frames that had been rolled
+        /// back - visible only at the moment of a left or right jump, which is the
+        /// only thing that buffer feeds.
+        /// </summary>
+        private static object CaptureValue(object value)
+        {
+            var array = value as Array;
+            if (array == null || array.Rank != 1)
+            {
+                return value;
+            }
+
+            Type element = array.GetType().GetElementType();
+            if (element == null || !element.IsValueType)
+            {
+                // An array of references is left alone: copying it would duplicate
+                // the entries, and following them is what this must not do.
+                return value;
+            }
+
+            var copy = (Array)array.Clone();
+            return new ArraySnapshot { Original = array, Values = copy };
+        }
+
+        /// <summary>
+        /// A copied array and the one it came from, so a restore writes the values
+        /// back into the array the object still holds rather than replacing it.
+        /// </summary>
+        private sealed class ArraySnapshot
+        {
+            public Array Original;
+            public Array Values;
         }
 
         /// <summary>
@@ -129,6 +176,20 @@ namespace LocalMultiplayerMod
 
                 try
                 {
+                    var array = values[i] as ArraySnapshot;
+                    if (array != null)
+                    {
+                        // Written back into the array the object still holds, so
+                        // anything else pointing at it sees the restored contents.
+                        Array.Copy(
+                            array.Values,
+                            array.Original,
+                            array.Values.Length
+                        );
+                        fields[i].SetValue(target, array.Original);
+                        continue;
+                    }
+
                     // Readonly instance fields are writable through reflection and
                     // have to be, exactly as in ObjectCopier.
                     fields[i].SetValue(target, values[i]);
@@ -188,6 +249,20 @@ namespace LocalMultiplayerMod
                 if (value == null || (roots != null && roots.Contains(value)))
                 {
                     continue;
+                }
+
+                // An array of value types is captured by value, so it is covered
+                // even though it is a reference. Reporting it would put a false
+                // entry in a list whose whole worth is that everything on it is
+                // worth looking at.
+                var array = value as Array;
+                if (array != null && array.Rank == 1)
+                {
+                    Type element = array.GetType().GetElementType();
+                    if (element != null && element.IsValueType)
+                    {
+                        continue;
+                    }
                 }
 
                 notes.Add(

@@ -162,6 +162,91 @@ namespace LocalMultiplayerMod.Tests
         }
 
         [TestMethod]
+        public void StartCarriesCoordinatesExactly()
+        {
+            var buffer = new byte[NetplayPacket.MaxSize];
+            const float X = 214.52911f;
+            const float Y = -39914.375f;
+
+            int length = NetplayPacket.WriteStart(buffer, 4242, X, Y);
+
+            float x;
+            float y;
+            long frame;
+            Assert.IsTrue(
+                NetplayPacket.ReadStart(buffer, length, out frame, out x, out y)
+            );
+
+            // The frame matters as much as the coordinates: without it the two
+            // machines agreed where the players stood and not when, and the same
+            // frame number meant a different amount of elapsed simulation on each.
+            Assert.AreEqual(4242, frame);
+
+            // Bit-exact, not merely close. The two machines are agreeing where a
+            // shared simulation begins, and a value that differed in its last bit
+            // would put them in different worlds from the first frame.
+            Assert.AreEqual(X, x, 0f);
+            Assert.AreEqual(Y, y, 0f);
+        }
+
+        [TestMethod]
+        public void StartSurvivesValuesThatAreNotRoundNumbers()
+        {
+            var buffer = new byte[NetplayPacket.MaxSize];
+
+            foreach (float value in new[]
+            {
+                0f, -0f, 0.1f, -1234.5678f, float.Epsilon, 1e20f
+            })
+            {
+                int length = NetplayPacket.WriteStart(buffer, 1, value, value);
+
+                float x;
+                float y;
+                long frame;
+                NetplayPacket.ReadStart(buffer, length, out frame, out x, out y);
+                Assert.AreEqual(value, x, 0f);
+            }
+        }
+
+        [TestMethod]
+        public void ChecksumSurvivesARoundTrip()
+        {
+            var buffer = new byte[NetplayPacket.MaxSize];
+
+            int length = NetplayPacket.WriteChecksum(buffer, 3600, 0xFEEDFACE);
+
+            long frame;
+            uint digest;
+            Assert.IsTrue(
+                NetplayPacket.ReadChecksum(buffer, length, out frame, out digest)
+            );
+            Assert.AreEqual(3600, frame);
+            Assert.AreEqual(0xFEEDFACE, digest);
+        }
+
+        [TestMethod]
+        public void RejectsATruncatedStartOrChecksum()
+        {
+            var buffer = new byte[NetplayPacket.MaxSize];
+            NetplayPacket.WriteStart(buffer, 7, 1f, 2f);
+
+            float x;
+            float y;
+            long startFrame;
+            Assert.IsFalse(
+                NetplayPacket.ReadStart(buffer, 5, out startFrame, out x, out y)
+            );
+
+            NetplayPacket.WriteChecksum(buffer, 1, 2);
+            long frame;
+            uint digest;
+            Assert.IsFalse(
+                NetplayPacket.ReadChecksum(buffer, 5, out frame, out digest)
+            );
+        }
+
+        [TestMethod]
         public void RejectsAnEmptyPacket()
         {
             NetplayPacket.Kind kind;

@@ -30,5 +30,6 @@
     <ScreenTracking>false</ScreenTracking>
     <Teleport>false</Teleport>
     <UpsideDown>false</UpsideDown>
+    <Netplay>false</Netplay>
   </Diagnostics>
 </LocalMultiplayerPreferences>

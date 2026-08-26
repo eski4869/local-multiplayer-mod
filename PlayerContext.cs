@@ -99,7 +99,33 @@ namespace LocalMultiplayerMod
         /// Player 1 owns the real save slot and the real camera; the others carry
         /// their own copies.
         /// </summary>
+        /// <summary>
+        /// Slot one. A simulation fact: this slot carries the block behaviours the
+        /// mods themselves registered - every other slot carries copies - and it
+        /// owns the base game's save path.
+        /// </summary>
         public bool IsPrimary { get { return _number == 1; } }
+
+        /// <summary>
+        /// Whether this machine's own input drives this player.
+        ///
+        /// A presentation fact, and kept apart from <see cref="IsPrimary"/> on
+        /// purpose. Locally they are the same player; over the network they are not,
+        /// because the slot numbering has to be agreed between the two machines
+        /// while the camera has to follow whoever is sitting at this one. Conflating
+        /// them meant a guest watched the host play - and fixing that by swapping
+        /// the slots instead put the same character on an original behaviour on one
+        /// machine and a copy on the other.
+        /// </summary>
+        public bool IsLocallyDriven
+        {
+            get
+            {
+                return ModEntry.Netplay.IsPlaying
+                    ? _number == ModEntry.Netplay.LocalPlayerNumber
+                    : IsPrimary;
+            }
+        }
     }
 
     internal sealed class PlayerItems : IPlayerItems

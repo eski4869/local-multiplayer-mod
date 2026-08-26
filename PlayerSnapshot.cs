@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using BehaviorTree;
 using EntityComponent;
 using HarmonyLib;
 using JumpKing.Player;
@@ -202,8 +203,183 @@ namespace LocalMultiplayerMod
             // The entity's own fields carry the sprite direction and the save
             // timestamp, and it is the owner of everything above.
             roots.Add(player);
+
+            AddBehaviourTree(player, roots);
+            AddOwnedObjects(roots);
             return roots;
         }
+
+        /// <summary>
+        /// Every node of the player's behaviour tree, and the manager over it.
+        ///
+        /// The tree is where "what is this player doing" actually lives. Its nodes
+        /// keep running state - which child a sequence is part-way through, whether
+        /// a selector is still running, the manager's own last result and tick -
+        /// and none of it was being captured. A rollback restored the charge timer
+        /// and left the tree believing it was somewhere else, which is a
+        /// disagreement no later frame can resolve.
+        ///
+        /// Walked rather than listed, so a node type nobody thought of is covered
+        /// anyway. It is bounded: the tree is built once at construction, and its
+        /// nodes reference each other and the player, all of which are roots
+        /// already.
+        /// </summary>
+        private static void AddBehaviourTree(PlayerEntity player, List<object> roots)
+        {
+            object comp = ReadStateField(player, "m_bt");
+            if (comp == null)
+            {
+                return;
+            }
+
+            FieldInfo treeField = AccessTools.Field(comp.GetType(), "m_behavior_tree");
+            object manager = treeField == null ? null : treeField.GetValue(comp);
+            if (manager == null)
+            {
+                return;
+            }
+
+            if (!roots.Contains(manager))
+            {
+                roots.Add(manager);
+            }
+
+            FieldInfo rootField = AccessTools.Field(manager.GetType(), "m_root_node");
+            var node = rootField == null ? null : rootField.GetValue(manager) as IBTnode;
+            AddNode(node, roots, 0);
+        }
+
+        private static void AddNode(IBTnode node, List<object> roots, int depth)
+        {
+            // The tree is shallow by construction; the limit only stops a cycle
+            // from becoming a hang.
+            if (node == null || depth > 32 || roots.Contains(node))
+            {
+                return;
+            }
+
+            roots.Add(node);
+
+            IBTnode[] related;
+            try
+            {
+                related = node.GetRelatedNodes();
+            }
+            catch
+            {
+                return;
+            }
+
+            if (related == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < related.Length; i++)
+            {
+                AddNode(related[i], roots, depth + 1);
+            }
+        }
+
+        /// <summary>
+        /// Data holders the roots own outright, added as roots themselves.
+        ///
+        /// A root's own fields are captured by value, but an object it points at is
+        /// not - the reference is kept and its contents are left alone, because
+        /// following references reaches the level and every block in it. That is
+        /// right for a collision query and wrong for a private scratch buffer.
+        ///
+        /// Recognised by shape rather than by a list of field names: a type whose
+        /// every field is a value type or an array of value types cannot reach
+        /// anything else, so capturing it is bounded by construction. That covers
+        /// <c>JumpState</c>'s four-frame input buffer, which decides the direction
+        /// of a jump when the key was released just before takeoff - and which,
+        /// left out, made exactly one thing wrong: a left or right jump after a
+        /// rollback.
+        /// </summary>
+        private static void AddOwnedObjects(List<object> roots)
+        {
+            var found = new List<object>();
+
+            for (int i = 0; i < roots.Count; i++)
+            {
+                object root = roots[i];
+                FieldInfo[] fields = StateSnapshot.FieldsOf(root.GetType());
+
+                for (int f = 0; f < fields.Length; f++)
+                {
+                    if (fields[f].FieldType.IsValueType ||
+                        fields[f].FieldType == typeof(string))
+                    {
+                        continue;
+                    }
+
+                    object value;
+                    try
+                    {
+                        value = fields[f].GetValue(root);
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    if (value == null || value is Array ||
+                        roots.Contains(value) || found.Contains(value) ||
+                        !IsSelfContained(value.GetType()))
+                    {
+                        continue;
+                    }
+
+                    found.Add(value);
+                }
+            }
+
+            roots.AddRange(found);
+        }
+
+        /// <summary>
+        /// True when nothing of this type can reach an object outside itself.
+        /// </summary>
+        private static bool IsSelfContained(Type type)
+        {
+            bool cached;
+            if (SelfContainedCache.TryGetValue(type, out cached))
+            {
+                return cached;
+            }
+
+            // Assumed false while being examined, so a type that refers to itself
+            // settles rather than recursing.
+            SelfContainedCache[type] = false;
+
+            bool result = true;
+            FieldInfo[] fields = StateSnapshot.FieldsOf(type);
+            for (int i = 0; i < fields.Length && result; i++)
+            {
+                Type fieldType = fields[i].FieldType;
+                if (fieldType.IsValueType || fieldType == typeof(string))
+                {
+                    continue;
+                }
+
+                if (fieldType.IsArray)
+                {
+                    Type element = fieldType.GetElementType();
+                    result = element != null &&
+                        (element.IsValueType || element == typeof(string));
+                    continue;
+                }
+
+                result = false;
+            }
+
+            SelfContainedCache[type] = result;
+            return result;
+        }
+
+        private static readonly Dictionary<Type, bool> SelfContainedCache =
+            new Dictionary<Type, bool>();
 
         private static object ReadStateField(PlayerEntity player, string name)
         {

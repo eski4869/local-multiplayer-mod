@@ -311,12 +311,18 @@ namespace LocalMultiplayerMod
                 context.Offset = Camera.Offset;
             }
 
-            // Player 1 *is* the global camera: everything outside a scope, the
-            // split renderer's base view included, reads what its CameraFollowComp
-            // left behind. Restoring here would freeze the view, so its update
-            // scope commits to the global camera instead of restoring.
+            // The player this machine drives *is* the global camera: everything
+            // outside a scope, the split renderer's base view included, reads what
+            // its CameraFollowComp left behind. Restoring here would freeze the
+            // view, so its update scope commits to the global camera instead of
+            // restoring.
+            //
+            // Whoever is driving, not slot one. Over the network the slots are
+            // agreed between the two machines so that both simulate the same
+            // bodies, which means a guest is slot two - and tying the camera to the
+            // slot number left them watching the host play.
             bool commitToGlobal =
-                context != null && writeBack && context.IsPrimary;
+                context != null && writeBack && context.IsLocallyDriven;
 
             if (!commitToGlobal)
             {

@@ -418,13 +418,23 @@ namespace LocalMultiplayerMod
                     ItemToggles.Seed(context);
                     PlayerSpriteFactory.Prepare(number);
 
-                    Vector2 spawnPosition;
-                    Vector2 spawnVelocity;
-                    bool hasOwnSpawn = MultiplayerStartPositions.TryGet(
-                        number,
-                        out spawnPosition,
-                        out spawnVelocity
-                    );
+                    Vector2 spawnPosition = Vector2.Zero;
+                    Vector2 spawnVelocity = Vector2.Zero;
+
+                    // Suppressed over the network. Each machine calls its own
+                    // player one, so the two simulations are mirror images of each
+                    // other - which only stays consistent while the two slots are
+                    // interchangeable. A map that spawns player two somewhere else
+                    // would put the same person at two different places depending
+                    // on whose screen you asked, and the shared world would be
+                    // wrong from the first frame.
+                    bool hasOwnSpawn =
+                        !ModEntry.Netplay.IsPlaying &&
+                        MultiplayerStartPositions.TryGet(
+                            number,
+                            out spawnPosition,
+                            out spawnVelocity
+                        );
 
                     if (context.Body != null)
                     {
@@ -566,7 +576,8 @@ namespace LocalMultiplayerMod
     {
         public static bool Prefix(
             InputComponent __instance,
-            ref InputComponent.State __result
+            ref InputComponent.State __result,
+            MethodBase __originalMethod
         )
         {
             int playerNumber = MultiplayerRuntime.GetPlayerNumber(__instance);
@@ -575,13 +586,24 @@ namespace LocalMultiplayerMod
                 return true;
             }
 
+            // GetState and GetPressedState ask different questions - what is held
+            // against what went down this frame - and the two patched methods land
+            // here together, so which one was called has to decide the answer.
+            // Returning the held state for both breaks everything that watches for
+            // the moment a charge begins or ends.
+            bool wantsEdge = __originalMethod.Name == "GetPressedState";
+
             // In a netplay session every player is driven from the timeline,
             // player 1 included. Reading the pad directly for the local player
             // would make its input arrive a frame earlier here than on the other
             // machine, and two simulations that disagree by one frame of charge
             // disagree by about one block of height.
             byte packed;
-            if (ModEntry.Netplay.TryGetInput(playerNumber, out packed))
+            bool known = wantsEdge
+                ? ModEntry.Netplay.TryGetPressedInput(playerNumber, out packed)
+                : ModEntry.Netplay.TryGetInput(playerNumber, out packed);
+
+            if (known)
             {
                 __result = NetplayInput.Unpack(packed);
                 return false;
@@ -655,8 +677,13 @@ namespace LocalMultiplayerMod
             GimmickStateCompat.ResyncUpsideDown();
         }
 
-        public static void Postfix(PlayerScope.Scope __state)
+        public static void Postfix(
+            PlayerEntity __instance,
+            PlayerScope.Scope __state
+        )
         {
+            // After the sprite, so a tag is never drawn under the king it names.
+            NetplayNameTags.Draw(MultiplayerRuntime.GetContext(__instance));
             __state.Dispose();
         }
     }
@@ -783,6 +810,25 @@ namespace LocalMultiplayerMod
             new RenderTarget2D[4];
         private static readonly int[] ViewTargetIndexes = new int[4];
         private static readonly PlayerContext[] ViewContexts = new PlayerContext[4];
+
+        /// <summary>
+        /// The context whose camera this machine's single view is drawn through.
+        /// </summary>
+        private static PlayerContext LocalViewContext
+        {
+            get
+            {
+                for (int i = 0; i < ViewContexts.Length; i++)
+                {
+                    if (ViewContexts[i] != null && ViewContexts[i].IsLocallyDriven)
+                    {
+                        return ViewContexts[i];
+                    }
+                }
+
+                return ViewContexts[0];
+            }
+        }
         private static bool _drawingPass;
 
         /// <summary>
@@ -910,7 +956,11 @@ namespace LocalMultiplayerMod
 
             try
             {
-                using (PlayerScope.Enter(ViewContexts[0], false, false))
+                // Drawn through the camera of whoever is sitting at this machine.
+                // Slot one is the host on both machines - that is what lets them
+                // simulate the same bodies - so a guest drawn through slot one
+                // would be watching the host's screen.
+                using (PlayerScope.Enter(LocalViewContext, false, false))
                 {
                     DrawWorld();
                 }

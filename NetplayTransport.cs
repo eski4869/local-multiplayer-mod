@@ -61,12 +61,174 @@ namespace LocalMultiplayerMod
 
         private CSteamID _lobby;
         private bool _installed;
+        private bool _created;
 
         /// <summary>Raised for each packet, with the peer it came from.</summary>
         public event Action<CSteamID, byte[], int> PacketReceived;
 
         /// <summary>Raised when the roster changes, including on join and leave.</summary>
         public event Action RosterChanged;
+
+        /// <summary>
+        /// Raised on entering a lobby. The flag says whether this machine created
+        /// it, which decides who describes the session and who reads that
+        /// description - the two sides of a lobby have nothing else to tell them
+        /// apart.
+        /// </summary>
+        public event Action<bool> LobbyEntered;
+
+        /// <summary>Raised when a lobby search finishes, with how many were found.</summary>
+        public event Action<int> SearchFinished;
+
+        /// <summary>
+        /// Finds friends who are in a Jump King lobby right now.
+        ///
+        /// Asks Steam about each friend rather than searching the lobby list.
+        /// <c>RequestLobbyList</c> looked like the obvious tool and returns nothing
+        /// here: a friends-only lobby is visible to friends but deliberately absent
+        /// from the lobby list, which is what makes it friends-only. Searching for
+        /// one therefore always came back empty, and the button appeared to do
+        /// nothing at all.
+        ///
+        /// <c>GetFriendGamePlayed</c> answers the question that was actually being
+        /// asked - which of my friends is in a lobby I could join - and it answers
+        /// it without the lobby having to be public to anybody else.
+        /// </summary>
+        public void FindLobbies()
+        {
+            if (!IsAvailable || IsInLobby || _searching)
+            {
+                return;
+            }
+
+            _searching = true;
+            _found.Clear();
+
+            try
+            {
+                CGameID thisGame = SteamUtils.GetAppID().m_AppId == 0
+                    ? default(CGameID)
+                    : new CGameID(SteamUtils.GetAppID());
+
+                int count = SteamFriends.GetFriendCount(
+                    EFriendFlags.k_EFriendFlagImmediate
+                );
+
+                for (int i = 0; i < count; i++)
+                {
+                    CSteamID friend = SteamFriends.GetFriendByIndex(
+                        i,
+                        EFriendFlags.k_EFriendFlagImmediate
+                    );
+
+                    FriendGameInfo_t info;
+                    if (!SteamFriends.GetFriendGamePlayed(friend, out info))
+                    {
+                        continue;
+                    }
+
+                    // Playing something else, or playing this but not in a lobby.
+                    if (info.m_gameID.m_GameID != thisGame.m_GameID ||
+                        !info.m_steamIDLobby.IsValid())
+                    {
+                        continue;
+                    }
+
+                    // No tag check here. A lobby's data cannot be read from
+                    // outside it until Steam has been asked for it, so filtering
+                    // on our own marker rejected every lobby including ours - the
+                    // list came back empty and the button looked broken.
+                    //
+                    // Asked for anyway, so the level shows next to the name once it
+                    // arrives. A lobby that turns out not to be ours is refused at
+                    // the handshake, with a reason, which is where a mismatched
+                    // build or level is caught too.
+                    SteamMatchmaking.RequestLobbyData(info.m_steamIDLobby);
+
+                    _found.Add(new FoundLobby
+                    {
+                        Id = info.m_steamIDLobby,
+                        HostName = SteamFriends.GetFriendPersonaName(friend),
+                        LevelId = SteamMatchmaking.GetLobbyData(
+                            info.m_steamIDLobby,
+                            "level_id"
+                        )
+                    });
+                }
+            }
+            catch
+            {
+                _found.Clear();
+            }
+
+            _searching = false;
+            Raise(SearchFinished, _found.Count);
+        }
+
+        /// <summary>
+        /// Opens Steam's friends list, where a friend already in a lobby shows a
+        /// "Join Game" of Steam's own. The fallback when a search finds nothing,
+        /// because Steam's own view of who is playing is more complete than a
+        /// filtered lobby query.
+        /// </summary>
+        public void ShowFriendsOverlay()
+        {
+            if (IsAvailable)
+            {
+                SteamFriends.ActivateGameOverlay("friends");
+            }
+        }
+
+        /// <summary>Marks a lobby as this mod's, so a search can find only ours.</summary>
+        public const string LobbyTag = "eski4869_localmultiplayer";
+        public const string LobbyTagValue = "1";
+
+        private bool _searching;
+
+        /// <summary>
+        /// What the last search found: the lobby and who is hosting it.
+        ///
+        /// Kept rather than joined immediately, because the player has to be able
+        /// to see the list and choose. Steam's own overlay was the first answer and
+        /// it is not one: it shows friends, not lobbies, and there is nothing in it
+        /// to press.
+        /// </summary>
+        public sealed class FoundLobby
+        {
+            public CSteamID Id;
+            public string HostName;
+            public string LevelId;
+        }
+
+        private readonly List<FoundLobby> _found = new List<FoundLobby>();
+
+        public IList<FoundLobby> Found
+        {
+            get { return _found; }
+        }
+
+        public void JoinFound(int index)
+        {
+            if (index < 0 || index >= _found.Count || IsInLobby)
+            {
+                return;
+            }
+
+            SteamMatchmaking.JoinLobby(_found[index].Id);
+        }
+
+
+        /// <summary>Reads a value the host wrote about the session.</summary>
+        public string ReadLobbyData(string key)
+        {
+            return IsInLobby ? SteamMatchmaking.GetLobbyData(_lobby, key) : null;
+        }
+
+        /// <summary>Describes the session, for joiners to read before connecting.</summary>
+        public bool WriteLobbyData(string key, string value)
+        {
+            return IsInLobby && SteamMatchmaking.SetLobbyData(_lobby, key, value);
+        }
 
         public bool IsInLobby
         {
@@ -81,6 +243,50 @@ namespace LocalMultiplayerMod
         public IList<CSteamID> Peers
         {
             get { return _peers; }
+        }
+
+        /// <summary>
+        /// Whether this machine owns the lobby.
+        ///
+        /// Both machines have to agree which body is player one, and there is
+        /// nothing symmetric that could tell them apart - each is "here" to itself.
+        /// The lobby owner is the one fact Steam guarantees both sides read the
+        /// same way, so it is what decides.
+        /// </summary>
+        public bool IsLobbyOwner
+        {
+            get
+            {
+                return IsInLobby &&
+                    SteamMatchmaking.GetLobbyOwner(_lobby) == SteamUser.GetSteamID();
+            }
+        }
+
+        /// <summary>This player's own Steam name.</summary>
+        public static string LocalName
+        {
+            get
+            {
+                try
+                {
+                    return SteamFriends.GetPersonaName();
+                }
+                catch
+                {
+                    return "You";
+                }
+            }
+        }
+
+        /// <summary>The peer's Steam name, for saying who you are playing with.</summary>
+        public string PeerName
+        {
+            get
+            {
+                return _peers.Count == 0
+                    ? null
+                    : SteamFriends.GetFriendPersonaName(_peers[0]);
+            }
         }
 
         public bool IsAvailable
@@ -172,6 +378,8 @@ namespace LocalMultiplayerMod
             _peers.Clear();
             SteamMatchmaking.LeaveLobby(_lobby);
             _lobby = CSteamID.Nil;
+            _created = false;
+            SteamFriends.ClearRichPresence();
             Raise(RosterChanged);
         }
 
@@ -271,7 +479,16 @@ namespace LocalMultiplayerMod
             }
 
             _lobby = new CSteamID(created.m_ulSteamIDLobby);
+            _created = true;
+
+            // Tells Steam this lobby is joinable, which is what puts "Join Game"
+            // beside your name in a friend's Steam list. Without it a friends-only
+            // lobby is reachable only by an invitation somebody has to remember to
+            // send.
+            SteamFriends.SetRichPresence("connect", "+connect_lobby " + _lobby.m_SteamID);
+
             RefreshPeers();
+            Raise(LobbyEntered, true);
 
             // The picker is not opened here. Choosing "Online" opens a lobby and
             // nothing more; throwing the Steam overlay up in front of somebody who
@@ -281,8 +498,18 @@ namespace LocalMultiplayerMod
 
         private void OnLobbyEntered(LobbyEnter_t entered)
         {
-            _lobby = new CSteamID(entered.m_ulSteamIDLobby);
+            // Fires for the creator too, right after OnLobbyCreated, so the
+            // already-announced case must not announce itself twice.
+            var lobby = new CSteamID(entered.m_ulSteamIDLobby);
+            bool alreadyKnown = _created && _lobby == lobby;
+
+            _lobby = lobby;
             RefreshPeers();
+
+            if (!alreadyKnown)
+            {
+                Raise(LobbyEntered, false);
+            }
         }
 
         private void OnJoinRequested(GameLobbyJoinRequested_t request)
@@ -328,6 +555,14 @@ namespace LocalMultiplayerMod
             }
 
             Raise(RosterChanged);
+        }
+
+        private static void Raise<T>(Action<T> handler, T argument)
+        {
+            if (handler != null)
+            {
+                handler(argument);
+            }
         }
 
         private static void Raise(Action handler)

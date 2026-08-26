@@ -47,6 +47,10 @@ namespace LocalMultiplayerMod
             EnsurePatched();
             BrokerCommandClient.Register(CommandTarget);
             MultiplayerRuntime.OnLevelStart();
+
+            // A joiner waiting on the right level finds out here, and a host who
+            // changed level updates what joiners are told to load.
+            Netplay.OnLevelStarted();
         }
 
         [OnLevelEnd]
@@ -289,12 +293,42 @@ namespace LocalMultiplayerMod
         // looking for.
         [PauseMenuItemSetting]
         [MainMenuItemSetting]
-        public static LocalMultiplayerOnlineAction LocalMultiplayerOnlineMenu(
+        public static LocalMultiplayerHostAction LocalMultiplayerHostMenu(
             object factory,
             JumpKing.PauseMenu.GuiFormat format
         )
         {
-            return new LocalMultiplayerOnlineAction();
+            return new LocalMultiplayerHostAction();
+        }
+
+        [PauseMenuItemSetting]
+        [MainMenuItemSetting]
+        public static LocalMultiplayerInviteAction LocalMultiplayerInviteMenu(
+            object factory,
+            JumpKing.PauseMenu.GuiFormat format
+        )
+        {
+            return new LocalMultiplayerInviteAction();
+        }
+
+        [PauseMenuItemSetting]
+        [MainMenuItemSetting]
+        public static LocalMultiplayerJoinAction LocalMultiplayerJoinMenu(
+            object factory,
+            JumpKing.PauseMenu.GuiFormat format
+        )
+        {
+            return new LocalMultiplayerJoinAction();
+        }
+
+        [PauseMenuItemSetting]
+        [MainMenuItemSetting]
+        public static LocalMultiplayerLeaveAction LocalMultiplayerLeaveMenu(
+            object factory,
+            JumpKing.PauseMenu.GuiFormat format
+        )
+        {
+            return new LocalMultiplayerLeaveAction();
         }
 
         [PauseMenuItemSetting]
@@ -929,6 +963,18 @@ namespace LocalMultiplayerMod
         public bool Teleport { get; set; } = false;
 
         /// <summary>
+        /// Every player's position, velocity and input against the frame number,
+        /// on both machines.
+        ///
+        /// The point is that the two logs line up. A checksum says the games have
+        /// drifted; this says which player, which direction, from which frame, and
+        /// whether it began at a jump, a landing, or nothing at all. Turn it on for
+        /// one session on both sides and compare - it writes a line per player per
+        /// frame, so it is only bearable while it is being read.
+        /// </summary>
+        public bool Netplay { get; set; } = false;
+
+        /// <summary>
         /// What the upside-down gravity resync produced, so a fix that is broken
         /// and a fix that never installed can be told apart.
         /// </summary>
@@ -1269,7 +1315,18 @@ namespace LocalMultiplayerMod
     /// Left with the same key that started it, so nobody is stuck in a session
     /// they cannot get out of.
     /// </summary>
-    public class LocalMultiplayerOnlineAction : IBTSimpleMenuItem
+    /// <summary>
+    /// Opens and closes the host's lobby - one line, one toggle.
+    ///
+    /// Opening and closing belong together because they are the same decision
+    /// seen from either side of itself, and a control that reads like a switch is
+    /// read like one. Inviting is a different act and has its own line: it does
+    /// not change what the session is, only who is told about it, and folding the
+    /// two together left one key meaning three things by state.
+    ///
+    /// Greyed out while a guest, because a guest has no lobby to open or close.
+    /// </summary>
+    public class LocalMultiplayerHostAction : IBTSimpleMenuItem
     {
         public override void Draw(int x, int y, bool selected)
         {
@@ -1277,7 +1334,7 @@ namespace LocalMultiplayerMod
                 x,
                 y,
                 Label,
-                Color.White,
+                IsAvailable ? Color.White : Color.Gray,
                 Game1.instance.contentManager.font.MenuFont
             );
         }
@@ -1289,60 +1346,319 @@ namespace LocalMultiplayerMod
 
         protected override BTresult MyRun(TickData p_data)
         {
-            if (!ControllerManager.instance.MenuController.GetPadState().confirm)
+            if (!IsAvailable ||
+                !ControllerManager.instance.MenuController.GetPadState().confirm)
             {
                 return BTresult.Failure;
             }
 
             ControllerManager.instance.MenuController.ConsumePadPresses();
 
-            switch (ModEntry.Netplay.Current)
+            if (ModEntry.Netplay.Current == NetplaySession.Phase.Idle)
             {
-                case NetplaySession.Phase.Idle:
-                    // One player per machine, so a session is two players sharing
-                    // one view. The split layouts give each local player a camera
-                    // of their own, which means nothing when only one is local.
-                    if (ModEntry.SetPlayerMode(2, TwoPlayerLayout.Shared))
-                    {
-                        ModEntry.Netplay.Host();
-                    }
-
-                    break;
-
-                case NetplaySession.Phase.WaitingForPeer:
-                case NetplaySession.Phase.Handshaking:
-                    ModEntry.Netplay.Invite();
-                    break;
-
-                default:
-                    ModEntry.Netplay.Leave();
-                    break;
+                ModEntry.Netplay.Host();
+            }
+            else
+            {
+                ModEntry.Netplay.Leave();
             }
 
             return BTresult.Success;
         }
 
         /// <summary>
-        /// Says what pressing it will do, not what state it is in. A player
-        /// reading a menu is deciding what to press.
+        /// Off while a guest: their session is somebody else's to close, and this
+        /// line would otherwise be the one that leaves it, which is the Guest
+        /// line's job.
         /// </summary>
+        private static bool IsAvailable
+        {
+            get
+            {
+                return ModEntry.Netplay.Current == NetplaySession.Phase.Idle ||
+                    ModEntry.Netplay.IsHost;
+            }
+        }
+
         private static string Label
         {
             get
             {
+                if (ModEntry.Netplay.Current == NetplaySession.Phase.Idle)
+                {
+                    return "Host: open a lobby";
+                }
+
+                if (!ModEntry.Netplay.IsHost)
+                {
+                    return "Host: (you joined a lobby)";
+                }
+
+                string peer = ModEntry.Netplay.PeerName;
                 switch (ModEntry.Netplay.Current)
                 {
-                    case NetplaySession.Phase.WaitingForPeer:
-                        return "Online: invite a friend";
-                    case NetplaySession.Phase.Handshaking:
-                        return "Online: connecting...";
                     case NetplaySession.Phase.Playing:
-                        return "Online: connected - leave";
-                    case NetplaySession.Phase.Refused:
-                        return "Online: refused - see log";
+                        return "Host: close lobby - playing with " +
+                            (string.IsNullOrEmpty(peer) ? "a friend" : peer);
+                    case NetplaySession.Phase.Handshaking:
+                        return "Host: close lobby - connecting";
                     default:
-                        return "Online: play with a friend";
+                        return "Host: close lobby - waiting";
                 }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Invites a friend, through Steam's own picker.
+    ///
+    /// Separate from opening the lobby, because it does not change what the
+    /// session is - only who has been told. Greyed out when there is nobody to
+    /// invite to anything, which is any time this machine is not hosting an open
+    /// lobby, and the label says which case it is rather than leaving it to be
+    /// worked out.
+    /// </summary>
+    public class LocalMultiplayerInviteAction : IBTSimpleMenuItem
+    {
+        public override void Draw(int x, int y, bool selected)
+        {
+            MenuItemHelper.Draw(
+                x,
+                y,
+                Label,
+                IsAvailable ? Color.White : Color.Gray,
+                Game1.instance.contentManager.font.MenuFont
+            );
+        }
+
+        public override Point GetSize()
+        {
+            return MenuItemHelper.GetSize(Label);
+        }
+
+        protected override BTresult MyRun(TickData p_data)
+        {
+            if (!IsAvailable ||
+                !ControllerManager.instance.MenuController.GetPadState().confirm)
+            {
+                return BTresult.Failure;
+            }
+
+            ControllerManager.instance.MenuController.ConsumePadPresses();
+            ModEntry.Netplay.Invite();
+            return BTresult.Success;
+        }
+
+        private static bool IsAvailable
+        {
+            get
+            {
+                return ModEntry.Netplay.IsHost &&
+                    ModEntry.Netplay.Current != NetplaySession.Phase.Idle;
+            }
+        }
+
+        private static string Label
+        {
+            get
+            {
+                if (ModEntry.Netplay.Current == NetplaySession.Phase.Idle)
+                {
+                    return "Invite: open a lobby first";
+                }
+
+                if (!ModEntry.Netplay.IsHost)
+                {
+                    return "Invite: only the host can";
+                }
+
+                return ModEntry.Netplay.Current == NetplaySession.Phase.Playing
+                    ? "Invite a friend (lobby is full)"
+                    : "Invite a friend";
+            }
+        }
+    }
+
+    /// <summary>
+    /// Leaves the session, in the terms of whichever side is leaving.
+    ///
+    /// A separate line from the one that hosts and invites, because the two are
+    /// not variations of one action. Closing a lobby ends the session for the
+    /// other player; walking out of one does not. Sharing a key with "invite a
+    /// friend" would put the destructive one a mispress away from the routine one.
+    ///
+    /// It also gives the menu somewhere to state the role at all times, which is
+    /// the thing that was missing: from inside a session the two sides otherwise
+    /// look identical.
+    /// </summary>
+    public class LocalMultiplayerLeaveAction : IBTSimpleMenuItem
+    {
+        public override void Draw(int x, int y, bool selected)
+        {
+            MenuItemHelper.Draw(
+                x,
+                y,
+                Label,
+                IsAvailable ? Color.White : Color.Gray,
+                Game1.instance.contentManager.font.MenuFont
+            );
+        }
+
+        public override Point GetSize()
+        {
+            return MenuItemHelper.GetSize(Label);
+        }
+
+        protected override BTresult MyRun(TickData p_data)
+        {
+            if (!IsAvailable ||
+                !ControllerManager.instance.MenuController.GetPadState().confirm)
+            {
+                return BTresult.Failure;
+            }
+
+            ControllerManager.instance.MenuController.ConsumePadPresses();
+            ModEntry.Netplay.Leave();
+            return BTresult.Success;
+        }
+
+        /// <summary>
+        /// For guests only. A host closes their lobby on the Host line, which is
+        /// the same control that opened it - leaving that one act split across two
+        /// places would be the confusion this menu keeps being reworked to remove.
+        /// </summary>
+        private static bool IsAvailable
+        {
+            get
+            {
+                return ModEntry.Netplay.Current != NetplaySession.Phase.Idle &&
+                    !ModEntry.Netplay.IsHost;
+            }
+        }
+
+        private static string Label
+        {
+            get
+            {
+                if (ModEntry.Netplay.Current == NetplaySession.Phase.Idle)
+                {
+                    return "Guest: not in a lobby";
+                }
+
+                if (ModEntry.Netplay.IsHost)
+                {
+                    return "Guest: (you are hosting)";
+                }
+
+                return "Guest: leave the lobby";
+            }
+        }
+    }
+    /// <summary>
+    /// Finds lobbies and joins one, inside the game.
+    ///
+    /// Its own line, separate from hosting, because they are different acts and the
+    /// player has to see which one they are about to do. Waiting to be invited also
+    /// leaves the guest depending on the host to think of them; a friends-only lobby
+    /// is visible to friends, so it can simply be looked for.
+    ///
+    /// The first attempt at this opened Steam's overlay instead. That was not a
+    /// lobby browser - it lists friends, and there is nothing in it to press - so
+    /// the guest had no way in at all.
+    ///
+    /// Confirm searches, then joins. Left and right move through what was found,
+    /// which is why the host's name is in the label: with more than one lobby up,
+    /// the name is the only thing telling them apart.
+    /// </summary>
+    public class LocalMultiplayerJoinAction : IBTSimpleMenuItem
+    {
+        public override void Draw(int x, int y, bool selected)
+        {
+            MenuItemHelper.Draw(
+                x,
+                y,
+                Label,
+                IsAvailable ? Color.White : Color.Gray,
+                Game1.instance.contentManager.font.MenuFont
+            );
+        }
+
+        public override Point GetSize()
+        {
+            return MenuItemHelper.GetSize(Label);
+        }
+
+        protected override BTresult MyRun(TickData p_data)
+        {
+            if (!IsAvailable)
+            {
+                return BTresult.Failure;
+            }
+
+            PadState pad = ControllerManager.instance.MenuController.GetPadState();
+
+            if (ModEntry.Netplay.Found.Count > 1 && (pad.left || pad.right))
+            {
+                ControllerManager.instance.MenuController.ConsumePadPresses();
+                ModEntry.Netplay.SelectNext(pad.right ? 1 : -1);
+                return BTresult.Success;
+            }
+
+            if (!pad.confirm)
+            {
+                return BTresult.Failure;
+            }
+
+            ControllerManager.instance.MenuController.ConsumePadPresses();
+
+            if (ModEntry.Netplay.Found.Count == 0)
+            {
+                ModEntry.Netplay.Join();
+            }
+            else
+            {
+                ModEntry.Netplay.JoinSelected();
+            }
+
+            return BTresult.Success;
+        }
+
+        private static bool IsAvailable
+        {
+            get
+            {
+                return ModEntry.Netplay.Current == NetplaySession.Phase.Idle &&
+                    !ModEntry.Netplay.IsSearching;
+            }
+        }
+
+        private static string Label
+        {
+            get
+            {
+                if (ModEntry.Netplay.IsSearching)
+                {
+                    return "Guest: searching...";
+                }
+
+                if (ModEntry.Netplay.Current != NetplaySession.Phase.Idle)
+                {
+                    return "Guest: already in a lobby";
+                }
+
+                int count = ModEntry.Netplay.Found.Count;
+                if (count == 0)
+                {
+                    return "Guest: search for a lobby";
+                }
+
+                NetplayTransport.FoundLobby lobby =
+                    ModEntry.Netplay.Found[ModEntry.Netplay.Selected];
+
+                return count == 1
+                    ? "Guest: join " + lobby.HostName
+                    : "Guest: join " + lobby.HostName +
+                        " (" + (ModEntry.Netplay.Selected + 1) + "/" + count + ")";
             }
         }
     }
