@@ -943,6 +943,22 @@ namespace LocalMultiplayerMod
                 ? 0f
                 : (float)gameTime.ElapsedGameTime.TotalSeconds;
 
+            // Whether this machine is keeping up with the fixed step at all.
+            //
+            // The game runs on a fixed timestep, so delta is a constant sixtieth of
+            // a second however the hardware is doing - which means the simulation
+            // can never say that a machine is struggling, and every measurement
+            // this mod takes of its own cost is silent about it too. MonoGame does
+            // know: it raises this when the update loop cannot finish a frame
+            // inside its budget and has to catch up.
+            //
+            // It is the difference between "the slower machine cannot run this
+            // game at sixty frames a second" and "this mod is making it miss", and
+            // no amount of reasoning from either side separates them.
+            ModEntry.Netplay.NoteFrameTiming(
+                gameTime != null && gameTime.IsRunningSlowly
+            );
+
             ModEntry.Netplay.BeforeGameUpdate(delta);
             return true;
         }

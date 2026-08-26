@@ -501,6 +501,10 @@ namespace LocalMultiplayerMod
             _localFrameAdvantage.Reset();
             _remoteFrameAdvantage.Reset();
 
+            // Left counting, this would have the next session declare its peer gone
+            // before they had a chance to say anything.
+            _framesSincePeerSpoke = 0;
+
             // Left set, this would hold the world still after the session that
             // justified it has gone.
             _stallThisFrame = false;
@@ -517,6 +521,41 @@ namespace LocalMultiplayerMod
         /// <summary>
         /// Called once per frame before the game advances.
         /// </summary>
+        /// <summary>
+        /// How long this machine really took over its last frame, and whether the
+        /// game had to catch up.
+        /// </summary>
+        /// <remarks>
+        /// Measured wall-clock, because nothing else here can see it. The fixed
+        /// timestep makes every frame report a sixtieth of a second whatever
+        /// actually happened, and the mod's own timers only ever say what the mod
+        /// itself cost. Between them they cannot tell a machine that is too slow
+        /// for this game from a machine this mod is slowing down.
+        /// </remarks>
+        public void NoteFrameTiming(bool runningSlowly)
+        {
+            long now = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (_lastFrameTimestamp > 0)
+            {
+                _frameMilliseconds +=
+                    (now - _lastFrameTimestamp) * 1000.0 /
+                    System.Diagnostics.Stopwatch.Frequency;
+                _frameTimings++;
+            }
+
+            _lastFrameTimestamp = now;
+
+            if (runningSlowly)
+            {
+                _slowFrames++;
+            }
+        }
+
+        private long _lastFrameTimestamp;
+        private double _frameMilliseconds;
+        private int _frameTimings;
+        private int _slowFrames;
+
         public void BeforeGameUpdate(float delta)
         {
             // Cleared before anything can return early. Every path out of here
@@ -599,6 +638,21 @@ namespace LocalMultiplayerMod
             //
             // A measurement must never be gated on the thing it is measuring.
             _localFrameAdvantage.Add(LocalFrameAdvantage);
+
+            // A peer that has stopped speaking has stopped playing.
+            //
+            // Nothing noticed before. A session whose other side had quit carried
+            // on predicting them for ever - a log ends with the guessed-ahead
+            // distance climbing past two hundred and eighty frames, four and a half
+            // seconds of a king being puppeted by a guess, snapshots still being
+            // taken for corrections that could never arrive. Whatever that looks
+            // like on screen, it is not the other player.
+            if (++_framesSincePeerSpoke > PeerSilenceLimit)
+            {
+                NetplayNotice.Show(PeerNameOrDefault + " disconnected");
+                Leave();
+                return;
+            }
 
             _stallThisFrame = ShouldWaitForPeer();
             if (_stallThisFrame)
@@ -1085,12 +1139,24 @@ namespace LocalMultiplayerMod
 
                 // Whether the misprediction search is finding nothing wrong or
                 // looking at nothing. Both report zero rollbacks.
+                // What this machine's frames really cost, against the 16.7ms it has.
+                // slow is MonoGame reporting it could not finish in time and had to
+                // catch up - which is the only thing here that can say the hardware
+                // is the problem rather than this mod.
+                " frame_ms=" + (_frameTimings == 0
+                    ? "0.0"
+                    : (_frameMilliseconds / _frameTimings).ToString("F2")) +
+                " slow=" + _slowFrames +
+
                 " compared=" + _resolver.Compared +
                 " skip_noactual=" + _resolver.SkippedNoActual +
                 " skip_noused=" + _resolver.SkippedNoUsed
             );
 
             _resolver.ResetCounters();
+            _frameMilliseconds = 0;
+            _frameTimings = 0;
+            _slowFrames = 0;
             _predictionStalls = 0;
             _stallReport = 0;
             _predictedFrames = 0;
@@ -1617,6 +1683,7 @@ namespace LocalMultiplayerMod
             }
 
             _remoteFrameAdvantage.Add(frameAdvantage);
+            _framesSincePeerSpoke = 0;
 
             for (int i = 0; i < count; i++)
             {
@@ -1634,6 +1701,19 @@ namespace LocalMultiplayerMod
         /// - see BeforeGameUpdate.
         /// </summary>
         private long _peerFrame = -1;
+
+        /// <summary>Frames since anything arrived from the peer.</summary>
+        private int _framesSincePeerSpoke;
+
+        /// <summary>
+        /// Two seconds of silence, after which the peer is gone rather than slow.
+        ///
+        /// Long enough to outlast any hitch worth waiting through - a load, a
+        /// collection, a lost burst of packets - and far short of the four and a
+        /// half seconds a real session spent puppeting a player who had already
+        /// quit.
+        /// </summary>
+        private const int PeerSilenceLimit = 120;
 
         private readonly FrameAdvantageWindow _localFrameAdvantage =
             new FrameAdvantageWindow();
