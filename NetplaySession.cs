@@ -1096,12 +1096,10 @@ namespace LocalMultiplayerMod
                 " gap=" + FramesToWaitOut +
                 " stalled=" + _stallReport +
 
-                // Which of the two bounds is doing the stopping. They call for
-                // different answers - a filled prediction window is the connection,
-                // a frame-advantage stall is the hardware - and one number for both
-                // cannot tell them apart.
+                // Only one thing stops the game now: the prediction window filling.
+                // gap above says whether the machines are keeping pace, which is
+                // what the removed frame-advantage stall used to act on.
                 " stall_pred=" + _predictionStalls +
-                " stall_ahead=" + _advantageStalls +
 
                 // Whether the misprediction search is finding nothing wrong or
                 // looking at nothing. Both report zero rollbacks.
@@ -1114,7 +1112,6 @@ namespace LocalMultiplayerMod
             _uncomparedNoActual = 0;
             _uncomparedNoUsed = 0;
             _predictionStalls = 0;
-            _advantageStalls = 0;
             _stallReport = 0;
             _predictedFrames = 0;
             _realFrames = 0;
@@ -1770,7 +1767,6 @@ namespace LocalMultiplayerMod
         private int _stallReport;
         private int _consecutiveStalls;
         private int _predictionStalls;
-        private int _advantageStalls;
 
         /// <summary>
         /// True while this machine's own frame should not advance and the world
@@ -1812,22 +1808,15 @@ namespace LocalMultiplayerMod
             bool guessingTooFar =
                 confirmed >= 0 && _frame - confirmed >= MaxPredictionFrames;
 
-            bool tooFarAhead = FramesToWaitOut > 0;
-
-            if (!guessingTooFar && !tooFarAhead)
+            // The frame-advantage stall is measured and reported but no longer
+            // acted on. See FramesToWaitOut for why.
+            if (!guessingTooFar)
             {
                 _consecutiveStalls = 0;
                 return false;
             }
 
-            if (guessingTooFar)
-            {
-                _predictionStalls++;
-            }
-            else
-            {
-                _advantageStalls++;
-            }
+            _predictionStalls++;
 
             _consecutiveStalls++;
 
@@ -1899,9 +1888,37 @@ namespace LocalMultiplayerMod
         }
 
         /// <summary>
-        /// How many frames this machine should wait out to let the peer catch up.
-        /// Zero when it is level or behind.
+        /// How many frames this machine would wait out to let the peer catch up.
+        /// Measured and reported; **not acted on**.
         /// </summary>
+        /// <remarks>
+        /// **Two different things stop the game, and only one of them is a
+        /// requirement.**
+        ///
+        /// The prediction window is the requirement. It caps what a correction can
+        /// cost, because a correction replays every frame back to the wrong guess
+        /// inside one real frame; without it each correction gets more expensive,
+        /// which slows the machine, which widens the window. Removing that would
+        /// bring back the spiral where one bad moment never recovers.
+        ///
+        /// This one is not. Holding back the machine in front only makes the
+        /// prediction window fill less often - it spreads a cost that the window
+        /// already bounds. Standard implementations do it, and it is worth having
+        /// when it works.
+        ///
+        /// It did not work here, twice, and both times it stopped the game
+        /// outright: first by mistaking the travel time for a gap and stalling
+        /// permanently on a healthy connection, then by freezing the measurement it
+        /// needed to stop stalling. Meanwhile the thing it protects - your own
+        /// input reaching your own king without waiting for the network - is what
+        /// it damages when it is wrong, because it stops the whole world including
+        /// you.
+        ///
+        /// So the measurement stays, in the cost report as `gap`, where it says
+        /// whether the two machines are keeping pace. Acting on it waits until it
+        /// can be proven against an offline harness rather than against a person
+        /// starting a game.
+        /// </remarks>
         /// <remarks>
         /// **This replaced comparing frame numbers directly, which measured the
         /// wrong thing entirely.** The peer's frame number arrives late by exactly
