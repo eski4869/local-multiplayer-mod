@@ -574,6 +574,19 @@ namespace LocalMultiplayerMod
             // arrives there later. Nothing about the simulation differs with the
             // hardware; only when each machine reaches it does, and the one in
             // front waiting is the only thing that closes that.
+            // Sampled on every real frame, and before the decision that reads it.
+            //
+            // This was taken after the frame advanced, which meant a stalled frame
+            // took no sample - so the average that decides whether to stall could
+            // only be updated by not stalling. It deadlocked exactly as that
+            // describes: twenty-nine consecutive reports with adv_l frozen at -4.1
+            // while raw moved from -2 to -8, the peer eight frames in front and
+            // this machine still holding itself back to let them catch up. The game
+            // stopped.
+            //
+            // A measurement must never be gated on the thing it is measuring.
+            _localFrameAdvantage.Add(LocalFrameAdvantage);
+
             _stallThisFrame = ShouldWaitForPeer();
             if (_stallThisFrame)
             {
@@ -582,11 +595,6 @@ namespace LocalMultiplayerMod
             }
 
             _frame++;
-
-            // Sampled once per advanced frame, so the average covers frames rather
-            // than packets - the peer's send rate must not weight it.
-            _localFrameAdvantage.Add(LocalFrameAdvantage);
-
             _clock.NoteSimulatedFrame();
             CaptureLocalInput();
             SendInputs();
@@ -1804,7 +1812,7 @@ namespace LocalMultiplayerMod
             bool guessingTooFar =
                 confirmed >= 0 && _frame - confirmed >= MaxPredictionFrames;
 
-            bool tooFarAhead = FramesToWaitOut >= MinWaitFrames;
+            bool tooFarAhead = FramesToWaitOut > 0;
 
             if (!guessingTooFar && !tooFarAhead)
             {
@@ -1921,17 +1929,10 @@ namespace LocalMultiplayerMod
                     return 0;
                 }
 
-                float local = _localFrameAdvantage.Average;
-                float remote = _remoteFrameAdvantage.Average;
-
-                // Behind, or level. Nothing for this machine to do; the other one
-                // is the one that will wait.
-                if (local >= remote)
-                {
-                    return 0;
-                }
-
-                return (int)(((remote - local) / 2f) + 0.5f);
+                return RollbackPlan.FramesToWait(
+                    _localFrameAdvantage.Average,
+                    _remoteFrameAdvantage.Average
+                );
             }
         }
 
@@ -1942,17 +1943,27 @@ namespace LocalMultiplayerMod
         /// nothing - the prediction covers it. Stalling for that would trade a gap
         /// nobody can feel for a stutter everybody can.
         /// </summary>
-        private const int MinWaitFrames = 3;
+        private const int MinWaitFrames = RollbackPlan.MinWaitFrames;
 
-        /// <summary>A third of a second, after which the freeze is explained.</summary>
-        private const int NoticeAfterStalls = 20;
+        /// <summary>Explained once the pause is long enough to be noticed.</summary>
+        private const int NoticeAfterStalls = 6;
 
         /// <summary>
-        /// Two seconds. Long enough to ride out a hitch - a load, a collection, a
-        /// dropped burst of packets - all of which resolve and would have stayed in
-        /// sync had the wait been allowed to finish. Short enough not to look hung.
+        /// The most frames in a row the game may be held still - about 150ms.
+        ///
+        /// Two seconds was allowed here, on the reasoning that a longer wait rides
+        /// out a hitch that would otherwise cost synchronisation. That reasoning
+        /// values the wrong thing. Two seconds of a frozen game is not a hitch
+        /// ridden out, it is the failure - worse than the desynchronisation it was
+        /// avoiding, and indistinguishable from a crash to the person holding the
+        /// controller. When the wait runs out the gap is simply accepted and the
+        /// guessing resumes.
+        ///
+        /// Nine is what rollback implementations cap a wait at, and it is a cap on
+        /// the response, not on how long a peer may be slow: the gap is remeasured
+        /// continuously and waiting resumes if it is still there.
         /// </summary>
-        private const int MaxStallFrames = 120;
+        private const int MaxStallFrames = RollbackPlan.MaxStallFrames;
 
         /// <summary>
         /// Refuses the session, saying why. The reason is the whole point: a

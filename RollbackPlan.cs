@@ -50,6 +50,54 @@ namespace LocalMultiplayerMod
         /// </summary>
         public const int RequiredBufferFrames = MaxRollbackFrames + 2;
 
+        /// <summary>
+        /// The gap worth stopping the game over. A frame or two apart is the normal
+        /// condition of two machines and the prediction covers it; stalling for that
+        /// trades a gap nobody can feel for a stutter everybody can.
+        /// </summary>
+        public const int MinWaitFrames = 3;
+
+        /// <summary>
+        /// The most frames in a row the game may be held still - about 150ms.
+        /// A cap on the response, not on how long a peer may be slow.
+        /// </summary>
+        public const int MaxStallFrames = 9;
+
+        /// <summary>
+        /// How many frames this machine should wait so the peer can catch up, from
+        /// the two sides' measurements of each other.
+        /// </summary>
+        /// <param name="localAdvantage">
+        /// How far behind the peer this machine measures itself, negative when it is
+        /// the one ahead. Contains the travel time.
+        /// </param>
+        /// <param name="remoteAdvantage">
+        /// The same quantity as the peer measured it, which contains the same travel
+        /// time - which is what makes the pair usable when neither is alone.
+        /// </param>
+        /// <remarks>
+        /// Comparing frame numbers directly cannot work, and not because it is
+        /// imprecise. The peer's frame number is where it was when it sent, so any
+        /// single measurement is the gap and the travel time added together with no
+        /// way to tell which is which. Against a threshold that reads as permanent
+        /// advantage on any connection slower than the threshold, and the machine
+        /// stalls for ever on a link doing nothing wrong.
+        ///
+        /// Subtracting the two removes the travel time exactly, because it appears
+        /// once in each with the same sign. What is left is twice the gap.
+        /// </remarks>
+        public static int FramesToWait(float localAdvantage, float remoteAdvantage)
+        {
+            // Level, or behind. The other machine is the one that will wait.
+            if (localAdvantage >= remoteAdvantage)
+            {
+                return 0;
+            }
+
+            var frames = (int)(((remoteAdvantage - localAdvantage) / 2f) + 0.5f);
+            return frames < MinWaitFrames ? 0 : frames;
+        }
+
         /// <summary>What a correction should do, or that it should not happen.</summary>
         public struct Plan
         {
