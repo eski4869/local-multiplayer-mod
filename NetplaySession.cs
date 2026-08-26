@@ -1028,9 +1028,18 @@ namespace LocalMultiplayerMod
                 " lag=" + (_frame - _remoteInputs.ConfirmedThrough) +
                 " applied=" + (_frame - _lastAppliedRemote) +
                 " ahead=" + (_peerFrame < 0 ? 0 : _frame - _peerFrame) +
-                " stalled=" + _stallReport
+                " stalled=" + _stallReport +
+
+                // Which of the two bounds is doing the stopping. They call for
+                // different answers - a filled prediction window is the connection,
+                // a frame-advantage stall is the hardware - and one number for both
+                // cannot tell them apart.
+                " stall_pred=" + _predictionStalls +
+                " stall_ahead=" + _advantageStalls
             );
 
+            _predictionStalls = 0;
+            _advantageStalls = 0;
             _stallReport = 0;
             _predictedFrames = 0;
             _realFrames = 0;
@@ -1587,6 +1596,8 @@ namespace LocalMultiplayerMod
 
         private int _stallReport;
         private int _consecutiveStalls;
+        private int _predictionStalls;
+        private int _advantageStalls;
 
         /// <summary>
         /// True while this machine's own frame should not advance and the world
@@ -1600,31 +1611,104 @@ namespace LocalMultiplayerMod
         private bool _stallThisFrame;
 
         /// <summary>
-        /// Whether this machine is far enough in front of the peer to wait a frame.
+        /// Whether this machine must wait a frame rather than advance.
+        ///
+        /// Two separate reasons, and confusing them is what this cost rounds of
+        /// testing to learn. They measure different things:
+        ///
+        /// The prediction window is how far ahead of *confirmed input* this machine
+        /// is - how much it is currently guessing. It bounds what a correction can
+        /// cost, because a correction re-simulates every frame back to the wrong
+        /// guess, all inside one real frame. Let the window grow and each
+        /// correction gets more expensive, which slows the machine, which widens
+        /// the window: that is the "gets worse and worse once it starts" spiral,
+        /// and it is not a symptom to chase but the absence of this bound.
+        ///
+        /// Frame advantage is how far ahead of the *peer's clock* this machine is -
+        /// how much sooner it arrives at the same frame. That is what a difference
+        /// in hardware produces, and only the machine in front waiting closes it.
+        ///
+        /// A connection can fill the prediction window while the clocks are level,
+        /// and a fast machine can run away while every input arrives on time. Both
+        /// have to be checked.
         /// </summary>
         private bool ShouldWaitForPeer()
         {
-            if (_peerFrame < 0 || _frame - _peerFrame <= MaxFrameAdvantage)
+            long confirmed = _remoteInputs.ConfirmedThrough;
+
+            bool guessingTooFar =
+                confirmed >= 0 && _frame - confirmed >= MaxPredictionFrames;
+
+            bool tooFarAhead =
+                _peerFrame >= 0 && _frame - _peerFrame > MaxFrameAdvantage;
+
+            if (!guessingTooFar && !tooFarAhead)
             {
                 _consecutiveStalls = 0;
                 return false;
             }
 
-            // A peer that has genuinely stopped - alt-tabbed, hitched, gone - must
-            // not freeze this game indefinitely. Past this the gap is accepted and
-            // the guessing resumes; whether to leave is the player's call, not
-            // something to decide by stalling for ever.
-            if (_consecutiveStalls >= MaxStallFrames)
+            if (guessingTooFar)
             {
-                return false;
+                _predictionStalls++;
+            }
+            else
+            {
+                _advantageStalls++;
             }
 
             _consecutiveStalls++;
+
+            // Long enough that the player knows the freeze is the other machine and
+            // not a crash. A silent stop reads as one.
+            if (_consecutiveStalls == NoticeAfterStalls)
+            {
+                NetplayNotice.Show("waiting for " + PeerNameOrDefault);
+            }
+
+            // A peer that has genuinely stopped - alt-tabbed, crashed, gone - must
+            // not hold this game still for ever. Past this the gap is accepted and
+            // the guessing resumes, which is the wrong world but a running one;
+            // whether to leave is the player's call, not something to decide by
+            // freezing until they force-quit.
+            if (_consecutiveStalls > MaxStallFrames)
+            {
+                if (_consecutiveStalls == MaxStallFrames + 1)
+                {
+                    NetplayNotice.Show(
+                        PeerNameOrDefault + " is not responding"
+                    );
+                }
+
+                return false;
+            }
+
             return true;
         }
 
+        private string PeerNameOrDefault
+        {
+            get
+            {
+                string name = PeerName;
+                return string.IsNullOrEmpty(name) ? "the other player" : name;
+            }
+        }
+
         /// <summary>
-        /// How far in front of the peer this machine may get before it waits.
+        /// How far ahead of confirmed input this machine may guess before it waits.
+        ///
+        /// This is the ceiling on what one correction can cost: no wrong guess can
+        /// be older than this, so no correction re-simulates more than this many
+        /// frames. Eight is the number rollback implementations have settled on -
+        /// about 130ms at sixty frames a second, which covers ordinary connections
+        /// while keeping the worst correction to eight replayed frames.
+        /// </summary>
+        private const int MaxPredictionFrames = 8;
+
+        /// <summary>
+        /// How far in front of the peer's clock this machine may get before it
+        /// waits.
         ///
         /// Not zero: the two are never exactly level, and stopping on every frame
         /// of ordinary jitter would cost more than the gap does. Wide enough to
@@ -1632,8 +1716,15 @@ namespace LocalMultiplayerMod
         /// </summary>
         private const int MaxFrameAdvantage = 6;
 
-        /// <summary>Half a second. Past it the peer is treated as stopped.</summary>
-        private const int MaxStallFrames = 30;
+        /// <summary>A third of a second, after which the freeze is explained.</summary>
+        private const int NoticeAfterStalls = 20;
+
+        /// <summary>
+        /// Two seconds. Long enough to ride out a hitch - a load, a collection, a
+        /// dropped burst of packets - all of which resolve and would have stayed in
+        /// sync had the wait been allowed to finish. Short enough not to look hung.
+        /// </summary>
+        private const int MaxStallFrames = 120;
 
         /// <summary>
         /// Refuses the session, saying why. The reason is the whole point: a
