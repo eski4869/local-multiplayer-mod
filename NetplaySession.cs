@@ -137,7 +137,7 @@ namespace LocalMultiplayerMod
         /// which buys most of the benefit before becoming the thing complained
         /// about.
         /// </summary>
-        private const int InputDelayFrames = 2;
+        private const int InputDelayFrames = RollbackPlan.InputDelayFrames;
 
         /// <summary>
         /// The frame whose inputs the simulation is running.
@@ -941,7 +941,24 @@ namespace LocalMultiplayerMod
                 return;
             }
 
-            if (!_rollback.CanRewindTo(from) || from > _frame)
+            // from indexes the input timeline; the snapshots are indexed by
+            // simulation frame, and the two are not the same number. Treating them
+            // as interchangeable made every correction restore a state two frames
+            // too early and replay two frames too many. The arithmetic lives in
+            // RollbackPlan, where it can be checked without a game.
+            RollbackPlan.Plan plan = RollbackPlan.For(from, _frame);
+            if (!plan.Needed)
+            {
+                // The frame that will consume the wrong guess has not run yet. It
+                // will read the real input, which has now arrived.
+                _lastAppliedRemote = confirmed;
+                return;
+            }
+
+            long firstSpoiled = plan.FirstSpoiled;
+            long restoreTo = plan.RestoreTo;
+
+            if (!_rollback.CanRewindTo(restoreTo) || restoreTo >= _frame)
             {
                 // Too far back to repair. Carrying on from here is wrong, but it is
                 // the only thing left, and saying so beats drifting in silence.
@@ -956,16 +973,16 @@ namespace LocalMultiplayerMod
             // however many frames of their own movement and simply left there,
             // which is what "無理やり引き戻される" was. Give up before touching
             // anything, or not at all.
-            if (_frame - from > MaxRollbackFrames)
+            if (_frame - firstSpoiled > MaxRollbackFrames)
             {
                 NetplayNotice.Show(
-                    "correction skipped - " + (_frame - from) + " frames behind"
+                    "correction skipped - " + (_frame - firstSpoiled) + " frames behind"
                 );
                 _lastAppliedRemote = confirmed;
                 return;
             }
 
-            if (!RestoreAll(from))
+            if (!RestoreAll(restoreTo))
             {
                 NetplayNotice.Show("desynchronised - could not rewind");
                 _lastAppliedRemote = confirmed;
@@ -973,7 +990,7 @@ namespace LocalMultiplayerMod
             }
 
             _rollbackCount++;
-            _resimulatedFrames += _frame - from;
+            _resimulatedFrames += _frame - firstSpoiled;
             var timer = System.Diagnostics.Stopwatch.StartNew();
 
             using (Resimulation.Enter())
@@ -984,17 +1001,25 @@ namespace LocalMultiplayerMod
                     return;
                 }
 
-                for (long frame = from; frame < _frame; frame++)
+                // Up to but not including _frame, which has not been simulated yet
+                // this cycle and is about to be, by the game, as soon as this
+                // returns. Replaying it here as well is what left the world one
+                // frame ahead of its own counter after every correction - an error
+                // no later frame can notice and every later correction adds to.
+                for (long frame = firstSpoiled; frame < _frame; frame++)
                 {
                     long resumed = _frame;
                     _frame = frame;
 
-                    // Cleared so the replayed frames record what they are now given
-                    // rather than keeping the guess that was just proven wrong -
-                    // otherwise the next comparison finds the same disagreement
-                    // again and rolls back to the same place for ever.
-                    _usedRemote.Record(frame, ResolveRemoteInput(frame));
-
+                    // What each replayed frame used is recorded by TryGetInput as
+                    // the frame runs, at the input index that frame consumes.
+                    // Recording it a second time here, at the *simulation* index,
+                    // wrote the input for frame-2 into slot frame - so a correction
+                    // corrupted the very record the next correction reads to decide
+                    // whether it is needed. That is why corrections were rare and
+                    // then enormous: clean data predicts held buttons correctly and
+                    // finds nothing, and one correction poisons the comparison for
+                    // everything that follows.
                     manager.Update(_frameDelta);
                     StoreSnapshots(frame);
                     _frame = resumed;
@@ -1010,7 +1035,7 @@ namespace LocalMultiplayerMod
         /// whole world simulated again inside one real frame, so this is a cost
         /// ceiling before it is anything else.
         /// </summary>
-        private const int MaxRollbackFrames = 20;
+        private const int MaxRollbackFrames = RollbackPlan.MaxRollbackFrames;
 
         private int _rollbackCount;
         private long _resimulatedFrames;
@@ -1843,7 +1868,7 @@ namespace LocalMultiplayerMod
         /// about 130ms at sixty frames a second, which covers ordinary connections
         /// while keeping the worst correction to eight replayed frames.
         /// </summary>
-        private const int MaxPredictionFrames = 8;
+        private const int MaxPredictionFrames = RollbackPlan.MaxPredictionFrames;
 
         /// <summary>
         /// How far behind the peer this machine measures itself to be, negative

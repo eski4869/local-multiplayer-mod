@@ -21,5 +21,6 @@
     <Compile Include="..\NetplayPacket.cs" Link="NetplayPacket.cs" />
     <Compile Include="..\UserCommandRouting.cs" Link="UserCommandRouting.cs" />
     <Compile Include="..\GatherCommand.cs" Link="GatherCommand.cs" />
+    <Compile Include="..\RollbackPlan.cs" Link="RollbackPlan.cs" />
   </ItemGroup>
 </Project>

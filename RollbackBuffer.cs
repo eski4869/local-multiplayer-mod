@@ -10,13 +10,16 @@ namespace LocalMultiplayerMod
     /// past it, the confirmed frame has already been discarded and there is nothing
     /// to return to.
     ///
-    /// **The size is a trade, not a tuning knob.** Longer tolerates worse
-    /// connections and costs memory and, worse, recomputation - a rollback of N
-    /// frames replays N frames of every player and every block behaviour inside one
-    /// real frame. Sixty is one second at this game's fixed step, which is far
-    /// beyond the tens of milliseconds a prediction is normally wrong by, and still
-    /// cheap enough to replay: Jump King's physics is four lines and its player
-    /// state is a handful of fields.
+    /// **The size is not a tuning knob.** It follows from the prediction window:
+    /// nothing may be guessed further ahead than that, so no disagreement can be
+    /// older than it, so nothing will ever ask for a frame beyond it. Making it
+    /// larger does not tolerate worse connections - it only retains snapshots for
+    /// corrections that cannot happen. See <see cref="RollbackPlan"/>, which holds
+    /// the numbers and the relationships between them.
+    ///
+    /// Frames are only stored while something is being guessed at, so this window
+    /// is a bound on how far back it reaches rather than a promise that every frame
+    /// inside it is present.
     ///
     /// A pause is deliberately not covered by this. Ten seconds is six hundred
     /// frames and replaying those through every gimmick mod inside one frame is not
@@ -32,11 +35,16 @@ namespace LocalMultiplayerMod
         /// worse connections. It does not: the prediction window caps how far a
         /// guess can be wrong at eight frames, so nothing ever asks for a frame
         /// older than that, and the rest was memory held and snapshots retained for
-        /// corrections that cannot happen. Twice the window plus a little leaves
-        /// room for the frame before the wrong guess and for the window's own
-        /// slack.
+        /// corrections that cannot happen.
+        ///
+        /// Sized so the cost ceiling is what refuses a correction, never the
+        /// buffer: a correction is capped at MaxRollbackFrames replayed frames and
+        /// restores the frame before the first spoiled one, so it can reach back
+        /// that many frames plus one. Anything less here would turn corrections
+        /// the ceiling allows into "the correction arrived too late", which is a
+        /// permanent divergence rather than a skipped repair.
         /// </summary>
-        public const int Frames = 20;
+        public const int Frames = RollbackPlan.RequiredBufferFrames;
 
         private readonly Dictionary<int, PlayerSnapshot[]> _byPlayer =
             new Dictionary<int, PlayerSnapshot[]>();
