@@ -273,11 +273,10 @@ namespace LocalMultiplayerMod
             _lobby = new CSteamID(created.m_ulSteamIDLobby);
             RefreshPeers();
 
-            // Opening the picker straight away is the difference between a lobby
-            // and a session. A player who turned this on wants to play with
-            // somebody, and leaving them to find the invite themselves is where
-            // this stalled before.
-            ShowInviteDialog();
+            // The picker is not opened here. Choosing "Online" opens a lobby and
+            // nothing more; throwing the Steam overlay up in front of somebody who
+            // only changed a setting is startling, and it takes the screen away
+            // from them before they asked for it. Inviting is its own button.
         }
 
         private void OnLobbyEntered(LobbyEnter_t entered)
