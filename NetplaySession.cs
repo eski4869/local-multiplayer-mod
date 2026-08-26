@@ -157,6 +157,19 @@ namespace LocalMultiplayerMod
         private readonly InputTimeline _remoteInputs = new InputTimeline();
         private readonly RollbackBuffer _rollback = new RollbackBuffer();
 
+        /// <summary>
+        /// What the remote player did, guessed or real, and the record of which.
+        /// Shared with the offline harness, so the game runs the same code the tests
+        /// do rather than a second implementation written to match it.
+        /// </summary>
+        private readonly RemoteInputResolver _resolver;
+
+        public NetplaySession()
+        {
+            _resolver = new RemoteInputResolver(_remoteInputs, _usedRemote);
+            _correctionWorld = new CorrectionWorld(this);
+        }
+
         private readonly byte[] _sendBuffer = new byte[NetplayPacket.MaxSize];
         private readonly byte[] _packetInputs =
             new byte[InputTimeline.PacketFrames];
@@ -791,13 +804,10 @@ namespace LocalMultiplayerMod
                 return false;
             }
 
-            if (!_remoteInputs.TryGet(at, out input))
+            bool predicted;
+            input = _resolver.Resolve(at, out predicted);
+            if (predicted)
             {
-                // Not arrived: assume they are still doing what they were doing. A
-                // full charge is thirty-six frames of one button, so this is right
-                // far more often here than in a game of taps - and when it is
-                // wrong, the rollback repairs it.
-                input = _remoteInputs.Predict(_frame);
                 _predictedFrames++;
             }
             else
@@ -805,9 +815,6 @@ namespace LocalMultiplayerMod
                 _realFrames++;
             }
 
-            // Recorded whether guessed or real, because the only way to know a
-            // guess was wrong later is to have kept what was used.
-            _usedRemote.Record(at, input);
             return true;
         }
 
@@ -924,84 +931,66 @@ namespace LocalMultiplayerMod
         /// </summary>
         private void RollBackIfMispredicted()
         {
-            // Never past the frame actually simulated. Confirmed input runs ahead
-            // of the simulation whenever this machine is behind the peer - the
-            // packets describe frames it has not reached yet - and those frames
-            // have no guess to be wrong about. Letting the marker follow the
-            // confirmed frame therefore pushed it past the present, and every
-            // misprediction at or before the current frame fell below the range
-            // this scans and was never examined again.
-            //
-            // That is the whole of "one side renders the other correctly and the
-            // other does not": the machine that lags is the one that stops
-            // correcting, and it is the only one that lags.
-            long confirmed = Math.Min(_remoteInputs.ConfirmedThrough, _frame);
-            if (confirmed <= _lastAppliedRemote)
-            {
-                return;
-            }
-
-            long from = FirstWrongFrame(_lastAppliedRemote + 1, confirmed);
-            if (from < 0)
-            {
-                // Every guess held. Nothing to redo.
-                _lastAppliedRemote = confirmed;
-                return;
-            }
-
-            // from indexes the input timeline; the snapshots are indexed by
-            // simulation frame, and the two are not the same number. Treating them
-            // as interchangeable made every correction restore a state two frames
-            // too early and replay two frames too many. The arithmetic lives in
-            // RollbackPlan, where it can be checked without a game.
-            RollbackPlan.Plan plan = RollbackPlan.For(from, _frame);
-            if (!plan.Needed)
-            {
-                // The frame that will consume the wrong guess has not run yet. It
-                // will read the real input, which has now arrived.
-                _lastAppliedRemote = confirmed;
-                return;
-            }
-
-            long firstSpoiled = plan.FirstSpoiled;
-            long restoreTo = plan.RestoreTo;
-
-            if (!_rollback.CanRewindTo(restoreTo) || restoreTo >= _frame)
-            {
-                // Too far back to repair. Carrying on from here is wrong, but it is
-                // the only thing left, and saying so beats drifting in silence.
-                NetplayNotice.Show("desynchronised - the correction arrived too late");
-                _lastAppliedRemote = confirmed;
-                return;
-            }
-
-            // Checked before anything is rewound, not after. Abandoning the
-            // correction below the restore left the world rewound to a frame that
-            // was then never replayed: the players were dragged back through
-            // however many frames of their own movement and simply left there,
-            // which is what "無理やり引き戻される" was. Give up before touching
-            // anything, or not at all.
-            if (_frame - firstSpoiled > MaxRollbackFrames)
-            {
-                NetplayNotice.Show(
-                    "correction skipped - " + (_frame - firstSpoiled) + " frames behind"
-                );
-                _lastAppliedRemote = confirmed;
-                return;
-            }
-
-            if (!RestoreAll(restoreTo))
-            {
-                NetplayNotice.Show("desynchronised - could not rewind");
-                _lastAppliedRemote = confirmed;
-                return;
-            }
-
-            _rollbackCount++;
-            _resimulatedFrames += _frame - firstSpoiled;
             var timer = System.Diagnostics.Stopwatch.StartNew();
+            Correction.Result result = Correction.Run(_correctionWorld);
 
-            using (Resimulation.Enter())
+            if (result.Outcome == Correction.Outcome.Applied)
+            {
+                _rollbackCount++;
+                _resimulatedFrames += result.Replayed;
+                _resimulateMilliseconds += timer.Elapsed.TotalMilliseconds;
+            }
+        }
+
+        /// <summary>
+        /// The session, seen as the thing a correction acts on.
+        ///
+        /// Kept as a separate object rather than implementing the interface on the
+        /// session itself, so the surface a correction is allowed to touch is
+        /// visible and small: a few frame numbers, restore, replay, report.
+        /// </summary>
+        private sealed class CorrectionWorld : ICorrectionWorld
+        {
+            private readonly NetplaySession _session;
+
+            public CorrectionWorld(NetplaySession session)
+            {
+                _session = session;
+            }
+
+            public long CurrentFrame
+            {
+                get { return _session._frame; }
+            }
+
+            public long RemoteConfirmedThrough
+            {
+                get { return _session._remoteInputs.ConfirmedThrough; }
+            }
+
+            public long LastAppliedRemote
+            {
+                get { return _session._lastAppliedRemote; }
+                set { _session._lastAppliedRemote = value; }
+            }
+
+            public long FirstWrongInputFrame(long from, long through)
+            {
+                return _session._resolver.FirstWrongInputFrame(from, through);
+            }
+
+            public bool CanRestore(long simulationFrame)
+            {
+                return _session._rollback.CanRewindTo(simulationFrame) &&
+                    simulationFrame < _session._frame;
+            }
+
+            public bool Restore(long simulationFrame)
+            {
+                return _session.RestoreAll(simulationFrame);
+            }
+
+            public void ReplayFrame(long simulationFrame)
             {
                 EntityManager manager = EntityManager.instance;
                 if (manager == null)
@@ -1009,34 +998,27 @@ namespace LocalMultiplayerMod
                     return;
                 }
 
-                // Up to but not including _frame, which has not been simulated yet
-                // this cycle and is about to be, by the game, as soon as this
-                // returns. Replaying it here as well is what left the world one
-                // frame ahead of its own counter after every correction - an error
-                // no later frame can notice and every later correction adds to.
-                for (long frame = firstSpoiled; frame < _frame; frame++)
-                {
-                    long resumed = _frame;
-                    _frame = frame;
+                // The frame number is moved so the players read the input that frame
+                // consumes, and moved back so the session's own place is not lost.
+                long resumed = _session._frame;
+                _session._frame = simulationFrame;
 
-                    // What each replayed frame used is recorded by TryGetInput as
-                    // the frame runs, at the input index that frame consumes.
-                    // Recording it a second time here, at the *simulation* index,
-                    // wrote the input for frame-2 into slot frame - so a correction
-                    // corrupted the very record the next correction reads to decide
-                    // whether it is needed. That is why corrections were rare and
-                    // then enormous: clean data predicts held buttons correctly and
-                    // finds nothing, and one correction poisons the comparison for
-                    // everything that follows.
-                    manager.Update(_frameDelta);
-                    StoreSnapshots(frame);
-                    _frame = resumed;
+                using (Resimulation.Enter())
+                {
+                    manager.Update(_session._frameDelta);
                 }
+
+                _session.StoreSnapshots(simulationFrame);
+                _session._frame = resumed;
             }
 
-            _resimulateMilliseconds += timer.Elapsed.TotalMilliseconds;
-            _lastAppliedRemote = confirmed;
+            public void Report(string message)
+            {
+                NetplayNotice.Show(message);
+            }
         }
+
+        private readonly CorrectionWorld _correctionWorld;
 
         /// <summary>
         /// How far back a correction may reach. Every frame in the range is the
@@ -1103,14 +1085,12 @@ namespace LocalMultiplayerMod
 
                 // Whether the misprediction search is finding nothing wrong or
                 // looking at nothing. Both report zero rollbacks.
-                " compared=" + _comparedFrames +
-                " skip_noactual=" + _uncomparedNoActual +
-                " skip_noused=" + _uncomparedNoUsed
+                " compared=" + _resolver.Compared +
+                " skip_noactual=" + _resolver.SkippedNoActual +
+                " skip_noused=" + _resolver.SkippedNoUsed
             );
 
-            _comparedFrames = 0;
-            _uncomparedNoActual = 0;
-            _uncomparedNoUsed = 0;
+            _resolver.ResetCounters();
             _predictionStalls = 0;
             _stallReport = 0;
             _predictedFrames = 0;
@@ -1419,58 +1399,6 @@ namespace LocalMultiplayerMod
                 ? input
                 : _remoteInputs.Predict(frame);
         }
-
-        /// <summary>
-        /// The earliest frame in the range whose real input differs from what was
-        /// fed to the simulation, or -1 when they all agree.
-        /// </summary>
-        private long FirstWrongFrame(long from, long through)
-        {
-            for (long frame = from; frame <= through; frame++)
-            {
-                byte actual;
-                if (!_remoteInputs.TryGet(frame, out actual))
-                {
-                    _uncomparedNoActual++;
-                    continue;
-                }
-
-                byte used;
-                if (!_usedRemote.TryGet(frame, out used))
-                {
-                    // Never simulated with this frame's input, so there is nothing
-                    // it could have spoiled.
-                    _uncomparedNoUsed++;
-                    continue;
-                }
-
-                _comparedFrames++;
-
-                if (used != actual)
-                {
-                    return frame;
-                }
-            }
-
-            return -1;
-        }
-
-        /// <summary>
-        /// How the misprediction search is spending its frames.
-        /// </summary>
-        /// <remarks>
-        /// Not one rollback has been seen in any recorded session, across seconds
-        /// where every single frame was simulated from a guess. Predictions that
-        /// good are not credible, so the search is not finding what it is looking
-        /// for - but "found nothing wrong" and "compared nothing at all" produce
-        /// the identical zero in the report, and they call for opposite fixes.
-        /// These three separate them: frames actually compared, frames skipped for
-        /// want of the real input, frames skipped for want of a record of what was
-        /// used.
-        /// </remarks>
-        private int _comparedFrames;
-        private int _uncomparedNoActual;
-        private int _uncomparedNoUsed;
 
         /// <summary>
         /// What the simulation was actually given for the remote player, frame by

@@ -79,6 +79,8 @@
 		<Compile Include="Resimulation.cs" />
 		<Compile Include="RollbackBuffer.cs" />
 		<Compile Include="RollbackPlan.cs" />
+		<Compile Include="RemoteInputResolver.cs" />
+		<Compile Include="Correction.cs" />
 		<Compile Include="NetplayLevelIdentity.cs" />
 		<Compile Include="NetplayNameTags.cs" />
 		<Compile Include="NetplayNotice.cs" />
