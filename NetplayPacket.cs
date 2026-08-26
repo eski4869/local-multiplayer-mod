@@ -24,7 +24,7 @@ namespace LocalMultiplayerMod
         /// misread. Checked at handshake so a mismatch is refused with a reason
         /// rather than showing up as a peer who behaves strangely.
         /// </summary>
-        public const byte ProtocolVersion = 1;
+        public const byte ProtocolVersion = 2;
 
         public enum Kind : byte
         {
@@ -135,15 +135,27 @@ namespace LocalMultiplayerMod
         /// makes the lag permanently worse" happens: a queue filled in real time
         /// and drained one item per frame never gives back what it accumulated.
         /// </remarks>
+        /// <summary>
+        /// <paramref name="frameAdvantage"/> is how far behind the peer this sender
+        /// believes it is, in frames, negative when it is the one ahead.
+        ///
+        /// It rides along with the inputs because the receiver cannot work it out
+        /// alone. A frame number off the wire is where the sender was when it sent,
+        /// so the difference from the receiver's own frame is the true gap plus the
+        /// travel time, and the two cannot be separated from one side. They can
+        /// from both: the same travel time is in each side's measurement, so
+        /// subtracting one from the other cancels it and leaves the gap.
+        /// </summary>
         public static int WriteInput(
             byte[] buffer,
             long lastFrame,
+            int frameAdvantage,
             byte[] inputs,
             int count
         )
         {
             if (buffer == null || inputs == null || count <= 0 ||
-                buffer.Length < 6 + count)
+                buffer.Length < 7 + count)
             {
                 return 0;
             }
@@ -151,33 +163,49 @@ namespace LocalMultiplayerMod
             buffer[0] = (byte)Kind.Input;
             WriteUInt32(buffer, 1, (uint)lastFrame);
             buffer[5] = (byte)count;
-            Array.Copy(inputs, 0, buffer, 6, count);
-            return 6 + count;
+
+            // Clamped into one signed byte. A gap beyond this is not a gap being
+            // measured any more, it is a connection that has stopped.
+            if (frameAdvantage > sbyte.MaxValue)
+            {
+                frameAdvantage = sbyte.MaxValue;
+            }
+            else if (frameAdvantage < sbyte.MinValue)
+            {
+                frameAdvantage = sbyte.MinValue;
+            }
+
+            buffer[6] = unchecked((byte)(sbyte)frameAdvantage);
+            Array.Copy(inputs, 0, buffer, 7, count);
+            return 7 + count;
         }
 
         public static bool ReadInput(
             byte[] buffer,
             int length,
             out long lastFrame,
+            out int frameAdvantage,
             out int count,
             out int offset
         )
         {
             lastFrame = 0;
+            frameAdvantage = 0;
             count = 0;
-            offset = 6;
+            offset = 7;
 
-            if (buffer == null || length < 6 || buffer[0] != (byte)Kind.Input)
+            if (buffer == null || length < 7 || buffer[0] != (byte)Kind.Input)
             {
                 return false;
             }
 
             lastFrame = ReadUInt32(buffer, 1);
             count = buffer[5];
+            frameAdvantage = unchecked((sbyte)buffer[6]);
 
             // A truncated or lying length must not be trusted into a read past the
             // end: this buffer came off the network.
-            if (count <= 0 || 6 + count > length)
+            if (count <= 0 || 7 + count > length)
             {
                 count = 0;
                 return false;

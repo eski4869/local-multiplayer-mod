@@ -485,6 +485,8 @@ namespace LocalMultiplayerMod
             _lastAppliedRemote = -1;
             _startFrame = -1;
             _peerFrame = -1;
+            _localFrameAdvantage.Reset();
+            _remoteFrameAdvantage.Reset();
 
             // Left set, this would hold the world still after the session that
             // justified it has gone.
@@ -580,6 +582,11 @@ namespace LocalMultiplayerMod
             }
 
             _frame++;
+
+            // Sampled once per advanced frame, so the average covers frames rather
+            // than packets - the peer's send rate must not weight it.
+            _localFrameAdvantage.Add(LocalFrameAdvantage);
+
             _clock.NoteSimulatedFrame();
             CaptureLocalInput();
             SendInputs();
@@ -840,6 +847,7 @@ namespace LocalMultiplayerMod
             int length = NetplayPacket.WriteInput(
                 _sendBuffer,
                 _localInputs.HighestKnown,
+                LocalFrameAdvantage,
                 _packetInputs,
                 count
             );
@@ -1028,7 +1036,13 @@ namespace LocalMultiplayerMod
                 " real=" + _realFrames +
                 " lag=" + (_frame - _remoteInputs.ConfirmedThrough) +
                 " applied=" + (_frame - _lastAppliedRemote) +
-                " ahead=" + (_peerFrame < 0 ? 0 : _frame - _peerFrame) +
+                // raw is the frame numbers straight off the wire, which is the gap
+                // and the travel time together and was mistaken for the gap alone.
+                // gap is the two sides' measurements differenced, which is the gap.
+                " raw=" + (_peerFrame < 0 ? 0 : _frame - _peerFrame) +
+                " adv_l=" + _localFrameAdvantage.Average.ToString("F1") +
+                " adv_r=" + _remoteFrameAdvantage.Average.ToString("F1") +
+                " gap=" + FramesToWaitOut +
                 " stalled=" + _stallReport +
 
                 // Which of the two bounds is doing the stopping. They call for
@@ -1564,12 +1578,14 @@ namespace LocalMultiplayerMod
         private void HandleInput(byte[] payload, int length)
         {
             long lastFrame;
+            int frameAdvantage;
             int count;
             int offset;
             if (!NetplayPacket.ReadInput(
                 payload,
                 length,
                 out lastFrame,
+                out frameAdvantage,
                 out count,
                 out offset
             ))
@@ -1584,13 +1600,17 @@ namespace LocalMultiplayerMod
             // so a hole there can never be filled: the confirmed frame stays at -1
             // for the rest of the session, and a rollback that only runs when the
             // confirmed frame advances then never runs at all.
-            // The newest frame in the packet is the frame the sender was on. That
-            // is the only thing telling this machine whether it is ahead, and
-            // therefore whether it should wait.
+            // The newest frame in the packet is the frame the sender was on when it
+            // sent - so this machine's distance from it is the real gap plus the
+            // travel time, and taken alone it cannot say which. The sender's own
+            // measurement, which contains the same travel time, is what separates
+            // them.
             if (lastFrame > _peerFrame)
             {
                 _peerFrame = lastFrame;
             }
+
+            _remoteFrameAdvantage.Add(frameAdvantage);
 
             for (int i = 0; i < count; i++)
             {
@@ -1608,6 +1628,63 @@ namespace LocalMultiplayerMod
         /// - see BeforeGameUpdate.
         /// </summary>
         private long _peerFrame = -1;
+
+        private readonly FrameAdvantageWindow _localFrameAdvantage =
+            new FrameAdvantageWindow();
+
+        private readonly FrameAdvantageWindow _remoteFrameAdvantage =
+            new FrameAdvantageWindow();
+
+        /// <summary>
+        /// A short rolling average of a frame-advantage measurement.
+        ///
+        /// Each sample carries whatever jitter its packet met on the way, and
+        /// stalling the game is far too blunt a response to spend on one noisy
+        /// reading. The window is long enough to see past a single late packet and
+        /// short enough to notice a machine genuinely pulling away.
+        /// </summary>
+        private sealed class FrameAdvantageWindow
+        {
+            private const int Size = 30;
+
+            private readonly int[] _samples = new int[Size];
+            private int _count;
+            private int _next;
+            private long _sum;
+
+            public bool HasSamples
+            {
+                get { return _count > 0; }
+            }
+
+            public float Average
+            {
+                get { return _count == 0 ? 0f : (float)_sum / _count; }
+            }
+
+            public void Add(int sample)
+            {
+                if (_count == Size)
+                {
+                    _sum -= _samples[_next];
+                }
+                else
+                {
+                    _count++;
+                }
+
+                _samples[_next] = sample;
+                _sum += sample;
+                _next = (_next + 1) % Size;
+            }
+
+            public void Reset()
+            {
+                _count = 0;
+                _next = 0;
+                _sum = 0;
+            }
+        }
 
         private int _stallReport;
         private int _consecutiveStalls;
@@ -1654,8 +1731,7 @@ namespace LocalMultiplayerMod
             bool guessingTooFar =
                 confirmed >= 0 && _frame - confirmed >= MaxPredictionFrames;
 
-            bool tooFarAhead =
-                _peerFrame >= 0 && _frame - _peerFrame > MaxFrameAdvantage;
+            bool tooFarAhead = FramesToWaitOut >= MinWaitFrames;
 
             if (!guessingTooFar && !tooFarAhead)
             {
@@ -1722,14 +1798,78 @@ namespace LocalMultiplayerMod
         private const int MaxPredictionFrames = 8;
 
         /// <summary>
-        /// How far in front of the peer's clock this machine may get before it
-        /// waits.
-        ///
-        /// Not zero: the two are never exactly level, and stopping on every frame
-        /// of ordinary jitter would cost more than the gap does. Wide enough to
-        /// absorb that, narrow enough that the guessing stays short.
+        /// How far behind the peer this machine measures itself to be, negative
+        /// when it is the one ahead. Sent to the peer every packet.
         /// </summary>
-        private const int MaxFrameAdvantage = 6;
+        /// <remarks>
+        /// This number on its own is not the gap. The peer's frame is where it was
+        /// when it sent, so this is the gap plus the travel time, and no amount of
+        /// care on one machine can separate those. What makes it usable is that the
+        /// peer computes the same quantity about this machine, and the same travel
+        /// time is inside both - so the difference cancels it. See
+        /// <see cref="FramesToWaitOut"/>.
+        /// </remarks>
+        private int LocalFrameAdvantage
+        {
+            get
+            {
+                return _peerFrame < 0 ? 0 : (int)(_peerFrame - _frame);
+            }
+        }
+
+        /// <summary>
+        /// How many frames this machine should wait out to let the peer catch up.
+        /// Zero when it is level or behind.
+        /// </summary>
+        /// <remarks>
+        /// **This replaced comparing frame numbers directly, which measured the
+        /// wrong thing entirely.** The peer's frame number arrives late by exactly
+        /// the travel time, so the raw difference never falls below the latency,
+        /// however perfectly the two machines are keeping pace. Against a fixed
+        /// threshold that reads as permanent frame advantage: the game stalled
+        /// around ten frames a second on a connection that was doing nothing wrong,
+        /// and the stalling *was* the lag being complained about.
+        ///
+        /// Averaging both sides' measurements and halving the difference is what
+        /// rollback implementations do, and it is not a heuristic - the travel time
+        /// appears once in each measurement with the same sign, so subtracting
+        /// removes it exactly, leaving twice the true gap.
+        ///
+        /// Averaged over a window because a single sample carries whatever jitter
+        /// that one packet met, and waiting is far too blunt an instrument to spend
+        /// on noise.
+        /// </remarks>
+        private int FramesToWaitOut
+        {
+            get
+            {
+                if (_peerFrame < 0 || !_remoteFrameAdvantage.HasSamples)
+                {
+                    return 0;
+                }
+
+                float local = _localFrameAdvantage.Average;
+                float remote = _remoteFrameAdvantage.Average;
+
+                // Behind, or level. Nothing for this machine to do; the other one
+                // is the one that will wait.
+                if (local >= remote)
+                {
+                    return 0;
+                }
+
+                return (int)(((remote - local) / 2f) + 0.5f);
+            }
+        }
+
+        /// <summary>
+        /// The gap worth stopping the game over.
+        ///
+        /// A frame or two apart is the normal condition of two machines and costs
+        /// nothing - the prediction covers it. Stalling for that would trade a gap
+        /// nobody can feel for a stutter everybody can.
+        /// </summary>
+        private const int MinWaitFrames = 3;
 
         /// <summary>A third of a second, after which the freeze is explained.</summary>
         private const int NoticeAfterStalls = 20;

@@ -48,15 +48,17 @@ namespace LocalMultiplayerMod.Tests
         {
             var buffer = new byte[NetplayPacket.MaxSize];
             var inputs = new byte[] { Left, Left, Jump };
-            int length = NetplayPacket.WriteInput(buffer, 1234, inputs, inputs.Length);
+            int length = NetplayPacket.WriteInput(buffer, 1234, -3, inputs, inputs.Length);
 
             long lastFrame;
+            int frameAdvantage;
             int count;
             int offset;
             bool ok = NetplayPacket.ReadInput(
                 buffer,
                 length,
                 out lastFrame,
+                out frameAdvantage,
                 out count,
                 out offset
             );
@@ -66,23 +68,59 @@ namespace LocalMultiplayerMod.Tests
             Assert.AreEqual(3, count);
             Assert.AreEqual(Left, buffer[offset]);
             Assert.AreEqual(Jump, buffer[offset + 2]);
+
+            // Negative means the sender is the one ahead, and it has to survive as
+            // a negative number: the sign is the entire content of the field. Read
+            // back unsigned it would say the sender is 253 frames behind, and the
+            // receiver would conclude it was the one that must wait - the exact
+            // opposite of what the sender measured.
+            Assert.AreEqual(-3, frameAdvantage);
         }
 
         [TestMethod]
-        public void AFullInputPacketIsTwentyOneBytes()
+        public void FrameAdvantageClampsRatherThanWrapping()
+        {
+            var buffer = new byte[NetplayPacket.MaxSize];
+            var inputs = new byte[] { Left };
+
+            int length = NetplayPacket.WriteInput(buffer, 5, 4000, inputs, 1);
+
+            long lastFrame;
+            int frameAdvantage;
+            int count;
+            int offset;
+            NetplayPacket.ReadInput(
+                buffer,
+                length,
+                out lastFrame,
+                out frameAdvantage,
+                out count,
+                out offset
+            );
+
+            // Far past what one byte holds. Truncating 4000 would give -96 - a
+            // large gap reported as its own opposite, which is worse than reporting
+            // it as merely large.
+            Assert.AreEqual(127, frameAdvantage);
+        }
+
+        [TestMethod]
+        public void AFullInputPacketIsTwentyThreeBytes()
         {
             var buffer = new byte[NetplayPacket.MaxSize];
             var inputs = new byte[InputTimeline.PacketFrames];
 
-            int length = NetplayPacket.WriteInput(buffer, 60, inputs, inputs.Length);
+            int length = NetplayPacket.WriteInput(buffer, 60, 0, inputs, inputs.Length);
 
-            // One byte of kind, four of frame, one of count, sixteen of input. The
-            // design's figure of 21 predates the kind byte, which pays for carrying
-            // the handshake and the pause signals on the same channel rather than
-            // inventing a second one. At 60Hz this is still about 1.3 KB/s, and
-            // small enough never to fragment - which is what keeps one lost
-            // datagram from becoming a lost burst.
-            Assert.AreEqual(22, length);
+            // One byte of kind, four of frame, one of count, one of frame
+            // advantage, sixteen of input. The design's figure of 21 predates the
+            // kind byte, which pays for carrying the handshake and the pause
+            // signals on the same channel rather than inventing a second one, and
+            // the advantage byte, which is what lets the two sides tell a real gap
+            // from the travel time. At 60Hz this is still about 1.4 KB/s, and small
+            // enough never to fragment - which is what keeps one lost datagram from
+            // becoming a lost burst.
+            Assert.AreEqual(23, length);
         }
 
         [TestMethod]
@@ -90,9 +128,10 @@ namespace LocalMultiplayerMod.Tests
         {
             var buffer = new byte[NetplayPacket.MaxSize];
             var inputs = new byte[InputTimeline.PacketFrames];
-            NetplayPacket.WriteInput(buffer, 60, inputs, inputs.Length);
+            NetplayPacket.WriteInput(buffer, 60, 0, inputs, inputs.Length);
 
             long lastFrame;
+            int frameAdvantage;
             int count;
             int offset;
 
@@ -101,6 +140,7 @@ namespace LocalMultiplayerMod.Tests
                 buffer,
                 8,
                 out lastFrame,
+                out frameAdvantage,
                 out count,
                 out offset
             );
@@ -140,6 +180,7 @@ namespace LocalMultiplayerMod.Tests
             );
 
             long lastFrame;
+            int frameAdvantage;
             int count;
             int offset;
 
@@ -147,6 +188,7 @@ namespace LocalMultiplayerMod.Tests
                 buffer,
                 length,
                 out lastFrame,
+                out frameAdvantage,
                 out count,
                 out offset
             ));
@@ -276,7 +318,7 @@ namespace LocalMultiplayerMod.Tests
             Assert.AreEqual(0, NetplayPacket.WriteHello(tiny, 1, 2, false));
             Assert.AreEqual(
                 0,
-                NetplayPacket.WriteInput(tiny, 1, new byte[16], 16)
+                NetplayPacket.WriteInput(tiny, 1, 0, new byte[16], 16)
             );
         }
 
@@ -287,15 +329,17 @@ namespace LocalMultiplayerMod.Tests
             var inputs = new byte[] { Jump };
 
             // Roughly nine hours at 60fps, well past any session, and still exact.
-            int length = NetplayPacket.WriteInput(buffer, 2000000, inputs, 1);
+            int length = NetplayPacket.WriteInput(buffer, 2000000, 0, inputs, 1);
 
             long lastFrame;
+            int frameAdvantage;
             int count;
             int offset;
             NetplayPacket.ReadInput(
                 buffer,
                 length,
                 out lastFrame,
+                out frameAdvantage,
                 out count,
                 out offset
             );
