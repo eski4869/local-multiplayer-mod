@@ -25,8 +25,18 @@ namespace LocalMultiplayerMod
     /// </summary>
     internal sealed class RollbackBuffer
     {
-        /// <summary>One second at sixty frames per second.</summary>
-        public const int Frames = 60;
+        /// <summary>
+        /// Comfortably past the prediction window, and no further.
+        ///
+        /// A second's worth was kept here on the reasoning that longer tolerates
+        /// worse connections. It does not: the prediction window caps how far a
+        /// guess can be wrong at eight frames, so nothing ever asks for a frame
+        /// older than that, and the rest was memory held and snapshots retained for
+        /// corrections that cannot happen. Twice the window plus a little leaves
+        /// room for the frame before the wrong guess and for the window's own
+        /// slack.
+        /// </summary>
+        public const int Frames = 20;
 
         private readonly Dictionary<int, PlayerSnapshot[]> _byPlayer =
             new Dictionary<int, PlayerSnapshot[]>();

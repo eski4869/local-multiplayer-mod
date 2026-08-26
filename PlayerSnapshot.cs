@@ -82,7 +82,7 @@ namespace LocalMultiplayerMod
 
             snapshot.Frame = frame;
 
-            List<object> roots = CollectRoots(context.Player);
+            List<object> roots = RootsFor(context.Player);
             for (int i = 0; i < roots.Count; i++)
             {
                 snapshot._roots.Add(roots[i]);
@@ -166,6 +166,56 @@ namespace LocalMultiplayerMod
             }
 
             return notes;
+        }
+
+        /// <summary>
+        /// The roots for a player, worked out once and then reused.
+        /// </summary>
+        /// <remarks>
+        /// **Which objects make up a player is structure; what is in them is
+        /// state.** Only the second changes while the game runs. The components,
+        /// the behaviour-tree nodes and the block behaviours are all built when the
+        /// player is built and the lists holding them are not added to in play - so
+        /// rediscovering them sixty times a second was rediscovering an answer that
+        /// could not have changed.
+        ///
+        /// It was not a small waste. The walk reflects over every field of every
+        /// root, and checks each candidate against a list of everything found so
+        /// far, so its cost grows with the square of the player's size - and it ran
+        /// on every frame for every player whether or not anything would ever look
+        /// at the result. On the slower of the two machines the snapshots were
+        /// costing over a millisecond a frame, most of it here, on a sixteen
+        /// millisecond budget.
+        ///
+        /// Keyed by the player object, so a rebuilt player is a different key and
+        /// gets a fresh answer. <see cref="ForgetRoots"/> empties it when a level
+        /// ends, which is the point at which the old entities stop existing.
+        /// </remarks>
+        private static List<object> RootsFor(PlayerEntity player)
+        {
+            List<object> roots;
+            if (RootCache.TryGetValue(player, out roots))
+            {
+                return roots;
+            }
+
+            roots = CollectRoots(player);
+            RootCache[player] = roots;
+            return roots;
+        }
+
+        private static readonly Dictionary<object, List<object>> RootCache =
+            new Dictionary<object, List<object>>(
+                ObjectCopier.ReferenceComparer.Instance
+            );
+
+        /// <summary>
+        /// Drops the cached roots. Called when the players are torn down, so the
+        /// next capture rediscovers the structure of whatever replaced them.
+        /// </summary>
+        public static void ForgetRoots()
+        {
+            RootCache.Clear();
         }
 
         private static List<object> CollectRoots(PlayerEntity player)

@@ -517,6 +517,11 @@ namespace LocalMultiplayerMod
             }
 
             Contexts[index] = null;
+
+            // The snapshot cache remembers which objects make up a player, and the
+            // ones it remembers have just stopped existing. Every path that takes a
+            // player away comes through here.
+            PlayerSnapshot.ForgetRoots();
         }
     }
 

@@ -644,7 +644,25 @@ namespace LocalMultiplayerMod
                 return;
             }
 
-            StoreSnapshots(_frame);
+            // Only frames a correction could return to.
+            //
+            // A rollback restores to the first frame whose guess was wrong, and a
+            // frame simulated from input that had already arrived was not a guess -
+            // nothing can ever be found wrong about it, so nothing will ever ask
+            // for its snapshot. Taking one anyway was the single most expensive
+            // thing this mod did per frame, and on the stretches where the peer's
+            // input was arriving ahead of the simulation it bought precisely
+            // nothing.
+            //
+            // The test is whether anything is outstanding at all rather than
+            // whether this particular frame was a guess, because a correction
+            // restores one frame and replays from there - so the frame before the
+            // wrong guess is wanted too, and it is cheaper to keep a frame that
+            // turns out unwanted than to be missing one.
+            if (_remoteInputs.ConfirmedThrough < _frame)
+            {
+                StoreSnapshots(_frame);
+            }
 
             TraceFrame();
             ReportCost();
@@ -1050,9 +1068,18 @@ namespace LocalMultiplayerMod
                 // a frame-advantage stall is the hardware - and one number for both
                 // cannot tell them apart.
                 " stall_pred=" + _predictionStalls +
-                " stall_ahead=" + _advantageStalls
+                " stall_ahead=" + _advantageStalls +
+
+                // Whether the misprediction search is finding nothing wrong or
+                // looking at nothing. Both report zero rollbacks.
+                " compared=" + _comparedFrames +
+                " skip_noactual=" + _uncomparedNoActual +
+                " skip_noused=" + _uncomparedNoUsed
             );
 
+            _comparedFrames = 0;
+            _uncomparedNoActual = 0;
+            _uncomparedNoUsed = 0;
             _predictionStalls = 0;
             _advantageStalls = 0;
             _stallReport = 0;
@@ -1374,6 +1401,7 @@ namespace LocalMultiplayerMod
                 byte actual;
                 if (!_remoteInputs.TryGet(frame, out actual))
                 {
+                    _uncomparedNoActual++;
                     continue;
                 }
 
@@ -1382,8 +1410,11 @@ namespace LocalMultiplayerMod
                 {
                     // Never simulated with this frame's input, so there is nothing
                     // it could have spoiled.
+                    _uncomparedNoUsed++;
                     continue;
                 }
+
+                _comparedFrames++;
 
                 if (used != actual)
                 {
@@ -1393,6 +1424,23 @@ namespace LocalMultiplayerMod
 
             return -1;
         }
+
+        /// <summary>
+        /// How the misprediction search is spending its frames.
+        /// </summary>
+        /// <remarks>
+        /// Not one rollback has been seen in any recorded session, across seconds
+        /// where every single frame was simulated from a guess. Predictions that
+        /// good are not credible, so the search is not finding what it is looking
+        /// for - but "found nothing wrong" and "compared nothing at all" produce
+        /// the identical zero in the report, and they call for opposite fixes.
+        /// These three separate them: frames actually compared, frames skipped for
+        /// want of the real input, frames skipped for want of a record of what was
+        /// used.
+        /// </remarks>
+        private int _comparedFrames;
+        private int _uncomparedNoActual;
+        private int _uncomparedNoUsed;
 
         /// <summary>
         /// What the simulation was actually given for the remote player, frame by
