@@ -58,10 +58,13 @@ namespace LocalMultiplayerMod
             NeedsLevel,
 
             Handshaking,
-            Playing,
+            Playing
 
-            /// <summary>The peer was refused, with a reason already reported.</summary>
-            Refused
+            // There was a Refused phase here. Nothing moved out of it, and Host and
+            // Join both require Idle, so being refused once ended netplay for the
+            // rest of the run - on the very fault whose remedy is to update and try
+            // again. Refusing is an outcome, not a place to stay: it now reports
+            // the reason and leaves, which returns to Idle like any other ending.
         }
 
         /// <summary>
@@ -479,7 +482,7 @@ namespace LocalMultiplayerMod
 
         public void Leave()
         {
-            if (_phase != Phase.Idle)
+            if (_phase != Phase.Idle && !_refusing)
             {
                 NetplayNotice.Show(
                     _transport.IsLobbyOwner
@@ -505,6 +508,7 @@ namespace LocalMultiplayerMod
             // before they had a chance to say anything.
             _framesSincePeerSpoke = 0;
             _peerHasSpoken = false;
+            _framesHandshaking = 0;
 
             // Left where the ended session put it, the next one would report
             // nothing until it had run as many frames as this one did.
@@ -588,7 +592,7 @@ namespace LocalMultiplayerMod
             // never asked to wait - including after the session has ended.
             _stallThisFrame = false;
 
-            if (_phase == Phase.Idle || _phase == Phase.Refused)
+            if (_phase == Phase.Idle)
             {
                 return;
             }
@@ -604,11 +608,49 @@ namespace LocalMultiplayerMod
             // is doing its job; there is nothing to send until they are on it.
             if (_phase == Phase.NeedsLevel)
             {
+                // Left without a clock deliberately. This is a person being asked
+                // to load a level, and the lobby membership is what holds the place
+                // open while they do it - which is the whole reason this phase
+                // exists rather than the join simply failing.
+                //
+                // It is bounded from the other side instead: the host's handshake
+                // clock runs out, and the lobby closing takes this with it.
                 return;
             }
 
-            if (_phase == Phase.WaitingForPeer || _phase == Phase.Handshaking)
+            if (_phase == Phase.WaitingForPeer)
             {
+                // No clock on this one on purpose: a lobby with nobody in it is
+                // waiting for an invitation to be accepted, which is a person's
+                // decision and takes as long as it takes.
+                _framesHandshaking = 0;
+                SendHello();
+                return;
+            }
+
+            if (_phase == Phase.Handshaking)
+            {
+                // Bounded, because a handshake that is not completing is not going
+                // to complete. Somebody is in the lobby and the two are exchanging
+                // greetings that go nowhere - a build that answers differently, a
+                // peer whose game closed between joining and replying. Without a
+                // clock this sits here for ever, sending a greeting sixty times a
+                // second to somebody who is not going to answer, with the menu
+                // still claiming a session is being set up.
+                //
+                // GGPO gives its synchronising state a timeout for the same reason.
+                // Every state a session can be in needs a way out of it; that was
+                // the fault behind a refusal ending netplay for the rest of the run,
+                // and this is the same fault one state along.
+                if (++_framesHandshaking > HandshakeLimit)
+                {
+                    NetplayNotice.Show(
+                        "could not agree a session with " + PeerNameOrDefault
+                    );
+                    Leave();
+                    return;
+                }
+
                 SendHello();
                 return;
             }
@@ -2018,6 +2060,16 @@ namespace LocalMultiplayerMod
         /// </summary>
         private long _peerFrame = -1;
 
+        /// <summary>Frames spent exchanging greetings that go nowhere.</summary>
+        private int _framesHandshaking;
+
+        /// <summary>
+        /// Ten seconds. Generous, because the other side may be loading a level,
+        /// and finite, because a handshake that has not completed by then is not
+        /// going to.
+        /// </summary>
+        private const int HandshakeLimit = 600;
+
         /// <summary>Whether the peer has ever sent an input.</summary>
         private bool _peerHasSpoken;
 
@@ -2318,9 +2370,34 @@ namespace LocalMultiplayerMod
         /// </summary>
         private void Refuse(string reason)
         {
-            _phase = Phase.Refused;
             NetplayNotice.Show("refused - " + reason);
-            _transport.LeaveLobby();
+
+            // **Refusing a session is not a state to stay in.**
+            //
+            // This parked the phase in Refused and left the lobby, and nothing ever
+            // moved it back: Host and Join both require Idle, so a player refused
+            // once could not start or join anything for the rest of the run. The
+            // most likely reason to be refused is a version mismatch, which is
+            // exactly the case where the fix is to update and try again - and
+            // trying again was the one thing that had been made impossible.
+            //
+            // Leaving properly reports what happened, takes the second body away
+            // and returns to Idle, which is what refusing a session should mean.
+            _refusing = true;
+            try
+            {
+                Leave();
+            }
+            finally
+            {
+                _refusing = false;
+            }
         }
+
+        /// <summary>
+        /// Set while leaving because a session was refused, so the leaving does not
+        /// announce itself over the reason that was just given.
+        /// </summary>
+        private bool _refusing;
     }
 }
