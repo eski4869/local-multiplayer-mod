@@ -833,20 +833,11 @@ namespace LocalMultiplayerMod
     {
         public static bool Prefix(JumpGame __instance)
         {
-            // Timed because drawing is usually the larger half of a frame, and
-            // because it is the half a catch-up update gets to skip: a machine that
-            // has fallen behind recovers by simulating without drawing, so what the
-            // drawing costs decides how quickly it can recover, or whether it can
-            // at all.
-            long began = FrameCost.Now;
-            try
-            {
-                return MultiplayerSplitRenderer.PrefixDraw(__instance);
-            }
-            finally
-            {
-                FrameCost.AddDraw(began);
-            }
+            // Not timed here. The drawing is measured around the whole of
+            // Game1.Draw instead, which is the same measurement whether one player
+            // is drawn or four - this one reads as zero with a single player and so
+            // compares against nothing.
+            return MultiplayerSplitRenderer.PrefixDraw(__instance);
         }
     }
 

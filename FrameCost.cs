@@ -22,13 +22,31 @@ namespace LocalMultiplayerMod
         private static readonly double TicksToMilliseconds =
             1000.0 / Stopwatch.Frequency;
 
+        /// <summary>
+        /// The whole simulation - every entity, every player, the lot.
+        /// </summary>
+        /// <remarks>
+        /// Measured the same way whether one player is running or four, which is
+        /// what makes the numbers comparable. The per-player figure beside it says
+        /// how much of this the added players account for; on its own it cannot say
+        /// whether that share is large, because it never measured the first player.
+        /// </remarks>
+        public static double SimulationMilliseconds;
+
         /// <summary>Simulating the players this mod added, beyond the first.</summary>
         public static double AdditionalPlayerMilliseconds;
 
         /// <summary>Entering and leaving a player's scope, and resyncing gimmicks.</summary>
         public static double ScopeMilliseconds;
 
-        /// <summary>Everything this mod draws: extra players, split views, tags.</summary>
+        /// <summary>
+        /// The whole of Game1.Draw - the world, every player, the interface.
+        ///
+        /// This measured only what this mod added to the drawing, which reads as
+        /// zero with one player and so cannot be compared against anything. The
+        /// question worth answering is what a frame costs with one player and with
+        /// two, and that needs the same thing measured in both.
+        /// </summary>
         public static double DrawMilliseconds;
 
         /// <summary>Extra simulated frames run to close a gap, drawing skipped.</summary>
@@ -37,6 +55,11 @@ namespace LocalMultiplayerMod
         public static long Now
         {
             get { return Stopwatch.GetTimestamp(); }
+        }
+
+        public static void AddSimulation(long since)
+        {
+            SimulationMilliseconds += (Now - since) * TicksToMilliseconds;
         }
 
         public static void AddAdditionalPlayer(long since)
@@ -61,6 +84,7 @@ namespace LocalMultiplayerMod
 
         public static void Reset()
         {
+            SimulationMilliseconds = 0;
             AdditionalPlayerMilliseconds = 0;
             ScopeMilliseconds = 0;
             DrawMilliseconds = 0;

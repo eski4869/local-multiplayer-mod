@@ -1346,6 +1346,7 @@ namespace LocalMultiplayerMod
                 // This mod's own share of that frame, broken out. Per frame, so it
                 // subtracts directly from frame_ms and can be compared against the
                 // 16.67ms the game has.
+                " sim_ms=" + PerFrame(FrameCost.SimulationMilliseconds) +
                 " p2_ms=" + PerFrame(FrameCost.AdditionalPlayerMilliseconds) +
                 " scope_ms=" + PerFrame(FrameCost.ScopeMilliseconds) +
                 " draw_ms=" + PerFrame(FrameCost.DrawMilliseconds) +

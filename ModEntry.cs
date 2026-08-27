@@ -453,12 +453,18 @@ namespace LocalMultiplayerMod
                 "Game1.Update"
             );
 
-            // The other end of the frame measurement.
+            // The other end of the frame measurement, and the drawing's own share.
             complete &= TryPatch(
                 harmony,
                 AccessTools.Method(typeof(Game1), "Draw"),
                 typeof(LocalMultiplayerFrameEndPatch),
                 "Game1.Draw (frame budget)"
+            );
+            complete &= TryPatch(
+                harmony,
+                AccessTools.Method(typeof(EntityManager), "Update"),
+                typeof(LocalMultiplayerSimulationTimingPatch),
+                "EntityManager.Update (frame budget)"
             );
 
             // Battle mode. Stomps are resolved after the whole frame has moved,
@@ -937,9 +943,50 @@ namespace LocalMultiplayerMod
     /// </remarks>
     internal static class LocalMultiplayerFrameEndPatch
     {
+        [ThreadStatic]
+        private static long _drawBegan;
+
+        public static void Prefix()
+        {
+            _drawBegan = FrameCost.Now;
+        }
+
         public static void Postfix()
         {
+            FrameCost.AddDraw(_drawBegan);
             FrameBudget.NoteFrameEnd();
+        }
+    }
+
+    /// <summary>
+    /// Times the whole simulation, so one player and two are measured the same way.
+    /// </summary>
+    /// <remarks>
+    /// The per-player figure only ever covered the players this mod added, which
+    /// reads as zero with one player - so it could say the second king cost nine
+    /// tenths of a millisecond without saying whether that was a tenth of the
+    /// simulation or half of it. Timing the whole thing under each player count
+    /// answers the question that was actually being asked.
+    /// </remarks>
+    internal static class LocalMultiplayerSimulationTimingPatch
+    {
+        [ThreadStatic]
+        private static long _began;
+
+        public static void Prefix()
+        {
+            _began = FrameCost.Now;
+        }
+
+        public static void Postfix()
+        {
+            // Re-simulated frames are simulation too, and counting them here would
+            // hide a correction's cost inside the ordinary per-frame figure. They
+            // are reported separately as catchup_ms and resim_ms.
+            if (!Resimulation.IsActive)
+            {
+                FrameCost.AddSimulation(_began);
+            }
         }
     }
 

@@ -105,6 +105,7 @@ namespace LocalMultiplayerMod
                 " frame_ms=" + (_milliseconds / _frames).ToString("F2") +
                 " work_ms=" + (_workMilliseconds / _frames).ToString("F2") +
                 " slow=" + _slowFrames +
+                " sim_ms=" + PerFrame(FrameCost.SimulationMilliseconds) +
                 " p2_ms=" + PerFrame(FrameCost.AdditionalPlayerMilliseconds) +
                 " scope_ms=" + PerFrame(FrameCost.ScopeMilliseconds) +
                 " draw_ms=" + PerFrame(FrameCost.DrawMilliseconds)
