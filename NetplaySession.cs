@@ -505,6 +505,10 @@ namespace LocalMultiplayerMod
             // before they had a chance to say anything.
             _framesSincePeerSpoke = 0;
 
+            // Left where the ended session put it, the next one would report
+            // nothing until it had run as many frames as this one did.
+            _lastReportedFrame = -1;
+
             // A repair owed to a session that has ended is not owed to the next one.
             _beyondRepair = false;
             _framesSinceSync = SyncInterval;
@@ -566,6 +570,9 @@ namespace LocalMultiplayerMod
                 ? "0.00"
                 : (total / _frameTimings).ToString("F2");
         }
+
+        /// <summary>The frame the cost report last covered.</summary>
+        private long _lastReportedFrame = -1;
 
         private long _lastFrameTimestamp;
         private double _frameMilliseconds;
@@ -1213,10 +1220,27 @@ namespace LocalMultiplayerMod
         /// </summary>
         private void ReportCost()
         {
-            if (_frame < 0 || _frame % NetplayClock.FramesPerSecond != 0)
+            // Measured in frames simulated, not in arriving at a multiple of them.
+            //
+            // The test used to be `_frame % 60 == 0`, and the frame does not advance
+            // while the machine is waiting - so a machine that stopped on a multiple
+            // of sixty wrote this line on every real frame instead of every sixtieth.
+            // Earlier logs carry a hundred and six copies of the report for frame
+            // 360 and twenty-nine for frame 420. The crash log is unbuffered, so
+            // each one is a write to disk, sixty times a second, beginning exactly
+            // when the machine is already failing to finish its frames. The
+            // measurement was feeding the thing it was measuring.
+            //
+            // Counting frames since the last report is right at both ends: a stall
+            // cannot repeat one, and a catch-up frame stepping over a multiple of
+            // sixty cannot skip one.
+            if (_frame < 0 ||
+                _frame - _lastReportedFrame < NetplayClock.FramesPerSecond)
             {
                 return;
             }
+
+            _lastReportedFrame = _frame;
 
             // predicted against real is what tells three very different situations
             // apart, all of which show as no rollbacks: the guesses were right, the
