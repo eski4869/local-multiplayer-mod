@@ -122,8 +122,15 @@ namespace LocalMultiplayerMod.Tests
         {
             if (ShouldStall())
             {
-                Stalls++;
-                return;
+                if (++_consecutiveStalls <= GiveUpWaitingAfter)
+                {
+                    Stalls++;
+                    return;
+                }
+            }
+            else
+            {
+                _consecutiveStalls = 0;
             }
 
             _frame++;
@@ -137,7 +144,56 @@ namespace LocalMultiplayerMod.Tests
             }
 
             Simulate(_frame);
+
+            CatchUpIfBehind(localInput);
         }
+
+        /// <summary>
+        /// An extra simulated frame when this machine has fallen behind, with the
+        /// drawing skipped - which is what makes it affordable on the machine that
+        /// needs it.
+        ///
+        /// Only over input that has already arrived, so it never buys frames a
+        /// correction would have to pay for again.
+        /// </summary>
+        /// <summary>Off, to test the waiting on its own.</summary>
+        public bool CatchUpEnabled = true;
+
+        /// <summary>
+        /// How many frames in a row this machine will wait before proceeding
+        /// anyway. <see cref="int.MaxValue"/> - the real behaviour - means it holds
+        /// for as long as the peer keeps speaking, and a peer who stops speaking is
+        /// handled by silence instead.
+        ///
+        /// Settable so a test can reinstate the version that gave up after nine and
+        /// show what that costs. It is not a knob the game has.
+        /// </summary>
+        public int GiveUpWaitingAfter = int.MaxValue;
+
+        private int _consecutiveStalls;
+
+        private void CatchUpIfBehind(byte localInput)
+        {
+            if (!CatchUpEnabled)
+            {
+                return;
+            }
+
+            if (_remoteInputs.ConfirmedThrough - _frame <= CatchUpThreshold)
+            {
+                return;
+            }
+
+            _frame++;
+            _localInputs.Record(_frame, localInput);
+            Correction.Run(this);
+            Simulate(_frame);
+            CatchUps++;
+        }
+
+        private const int CatchUpThreshold = 4;
+
+        public int CatchUps { get; private set; }
 
         /// <summary>
         /// The one bound that still stops the game: never guess further ahead than
@@ -327,6 +383,15 @@ namespace LocalMultiplayerMod.Tests
             public HarnessMachine A;
             public HarnessMachine B;
             public long ComparedAtFrame;
+
+            /// <summary>
+            /// The furthest apart the two ever got, which is the thing a player
+            /// feels. Measured during play and not at the end: left to settle, two
+            /// machines close the gap between them whatever happened on the way,
+            /// so a final reading says nothing about a session spent three seconds
+            /// apart.
+            /// </summary>
+            public long WidestGap;
             public bool Converged;
             public string Detail;
         }
@@ -343,12 +408,84 @@ namespace LocalMultiplayerMod.Tests
             int seed
         )
         {
+            return Play(frames, latency, jitter, lossPercent, seed, 0);
+        }
+
+        /// <summary>
+        /// <paramref name="bSkipsEveryNth"/> makes B miss that many real frames out
+        /// of every ten - a machine that cannot hold sixty frames a second. Zero
+        /// for two machines of equal speed.
+        /// </summary>
+        public static Outcome Play(
+            int frames,
+            int latency,
+            int jitter,
+            int lossPercent,
+            int seed,
+            int bSkipsPerTen
+        )
+        {
+            return Play(frames, latency, jitter, lossPercent, seed, bSkipsPerTen, 0, 0);
+        }
+
+        /// <summary>
+        /// <paramref name="bHitchFrames"/> is a stretch where B stops outright - a
+        /// load, a collection, a window dragged - after which it has ground to make
+        /// up that no amount of waiting by A can cover for it.
+        /// </summary>
+        public static Outcome Play(
+            int frames,
+            int latency,
+            int jitter,
+            int lossPercent,
+            int seed,
+            int bSkipsPerTen,
+            int bHitchAt,
+            int bHitchFrames
+        )
+        {
+            return Play(frames, latency, jitter, lossPercent, seed, bSkipsPerTen, bHitchAt, bHitchFrames, true);
+        }
+
+        public static Outcome Play(
+            int frames,
+            int latency,
+            int jitter,
+            int lossPercent,
+            int seed,
+            int bSkipsPerTen,
+            int bHitchAt,
+            int bHitchFrames,
+            bool catchUp
+        )
+        {
+            return Play(frames, latency, jitter, lossPercent, seed, bSkipsPerTen, bHitchAt, bHitchFrames, catchUp, int.MaxValue);
+        }
+
+        public static Outcome Play(
+            int frames,
+            int latency,
+            int jitter,
+            int lossPercent,
+            int seed,
+            int bSkipsPerTen,
+            int bHitchAt,
+            int bHitchFrames,
+            bool catchUp,
+            int giveUpWaitingAfter
+        )
+        {
             var a = new HarnessMachine(true);
             var b = new HarnessMachine(false);
+            a.CatchUpEnabled = catchUp;
+            b.CatchUpEnabled = catchUp;
+            a.GiveUpWaitingAfter = giveUpWaitingAfter;
+            b.GiveUpWaitingAfter = giveUpWaitingAfter;
             var aToB = new HarnessLink(latency, jitter, lossPercent, seed);
             var bToA = new HarnessLink(latency, jitter, lossPercent, seed + 977);
 
             var inputs = new Random(seed + 31);
+            long widest = 0;
             byte aHeld = 0;
             byte bHeld = 0;
             int aHold = 0;
@@ -374,10 +511,27 @@ namespace LocalMultiplayerMod.Tests
                 bToA.Advance(a);
 
                 a.Tick(aHeld);
-                b.Tick(bHeld);
+
+                // B misses some real frames outright: the machine cannot finish
+                // them in time. It is not slowed down, it simply does not get
+                // them - which is what a machine running at fifty frames a second
+                // against one running at sixty actually experiences.
+                bool hitching = bHitchFrames > 0 &&
+                    i >= bHitchAt && i < bHitchAt + bHitchFrames;
+
+                if (!hitching && (bSkipsPerTen == 0 || i % 10 >= bSkipsPerTen))
+                {
+                    b.Tick(bHeld);
+                }
 
                 SendFrom(a, aToB);
                 SendFrom(b, bToA);
+
+                long apart = Math.Abs(a.Frame - b.Frame);
+                if (apart > widest)
+                {
+                    widest = apart;
+                }
             }
 
             // Let everything in flight land and every outstanding correction run,
@@ -411,6 +565,7 @@ namespace LocalMultiplayerMod.Tests
             long common = Math.Min(a.Frame, b.Frame) -
                 RollbackPlan.MaxPredictionFrames - RollbackPlan.InputDelayFrames;
             outcome.ComparedAtFrame = common;
+            outcome.WidestGap = widest;
 
             World stateA;
             World stateB;

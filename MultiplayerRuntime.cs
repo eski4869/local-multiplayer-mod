@@ -535,9 +535,20 @@ namespace LocalMultiplayerMod
     /// </summary>
     internal static class PlayerUpdateScopePatch
     {
+        /// <summary>
+        /// When this player's update began, and whether it is one this mod added.
+        /// Zero when nothing is being timed.
+        /// </summary>
+        [ThreadStatic]
+        private static long _startedAt;
+
+        [ThreadStatic]
+        private static bool _timingAdditional;
+
         public static void Prefix(Entity __instance, out PlayerScope.Scope __state)
         {
             __state = default(PlayerScope.Scope);
+            _startedAt = 0;
 
             // Single player must be left exactly as the base game runs it. A
             // scope would install the context's camera at the start of every
@@ -554,6 +565,7 @@ namespace LocalMultiplayerMod
                 MultiplayerRuntime.GetContext(player);
             if (context != null)
             {
+                long scopeBegan = FrameCost.Now;
                 __state = PlayerScope.Enter(context);
 
                 // UpsideDownCore snapshots gravity direction from Controller into
@@ -563,11 +575,32 @@ namespace LocalMultiplayerMod
                 // rather than whichever player wrote it last.
                 GimmickStateCompat.ResyncUpsideDown();
                 UpsideDownProbe.Sample(context.Number);
+                FrameCost.AddScope(scopeBegan);
+
+                // Timed separately for the players this mod added, because that is
+                // the share a machine would get back by not running them - the
+                // first player it would be simulating anyway.
+                _timingAdditional = !context.IsPrimary;
+                _startedAt = FrameCost.Now;
             }
         }
 
         public static void Postfix(PlayerScope.Scope __state)
         {
+            if (_startedAt != 0)
+            {
+                if (_timingAdditional)
+                {
+                    FrameCost.AddAdditionalPlayer(_startedAt);
+                }
+
+                long scopeBegan = FrameCost.Now;
+                __state.Dispose();
+                FrameCost.AddScope(scopeBegan);
+                _startedAt = 0;
+                return;
+            }
+
             __state.Dispose();
         }
     }
@@ -800,7 +833,20 @@ namespace LocalMultiplayerMod
     {
         public static bool Prefix(JumpGame __instance)
         {
-            return MultiplayerSplitRenderer.PrefixDraw(__instance);
+            // Timed because drawing is usually the larger half of a frame, and
+            // because it is the half a catch-up update gets to skip: a machine that
+            // has fallen behind recovers by simulating without drawing, so what the
+            // drawing costs decides how quickly it can recover, or whether it can
+            // at all.
+            long began = FrameCost.Now;
+            try
+            {
+                return MultiplayerSplitRenderer.PrefixDraw(__instance);
+            }
+            finally
+            {
+                FrameCost.AddDraw(began);
+            }
         }
     }
 

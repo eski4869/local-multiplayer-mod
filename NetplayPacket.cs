@@ -24,7 +24,7 @@ namespace LocalMultiplayerMod
         /// misread. Checked at handshake so a mismatch is refused with a reason
         /// rather than showing up as a peer who behaves strangely.
         /// </summary>
-        public const byte ProtocolVersion = 2;
+        public const byte ProtocolVersion = 3;
 
         public enum Kind : byte
         {
@@ -60,7 +60,33 @@ namespace LocalMultiplayerMod
             /// while. Comparing a number every so often turns that into something
             /// with a frame attached to it.
             /// </summary>
-            Checksum = 6
+            Checksum = 6,
+
+            /// <summary>
+            /// Where both players are, sent by the host to put a session back
+            /// together when recomputing can no longer do it.
+            /// </summary>
+            /// <remarks>
+            /// **This deliberately breaks the determinism the rest of the design
+            /// rests on**, and that is the right trade at the point it is used.
+            ///
+            /// A correction returns to a saved frame and replays. Past the buffer
+            /// there is no saved frame to return to, so there is nothing to replay
+            /// from and no amount of further correction helps - the two machines
+            /// simply carry on in worlds that no longer match. What that was doing
+            /// until now was reporting "desynchronised" and drifting, which
+            /// preserves the principle by abandoning the purpose.
+            ///
+            /// Determinism is not the goal. It is the cheap way to keep two
+            /// machines agreeing, and where it cannot, agreeing still matters more.
+            /// Adopting the host's positions restores that at a known cost: the
+            /// guest's own king moves to where the host believed it was, which may
+            /// be somewhere it did not go. A player can be struck by something they
+            /// had dodged. That is a worse frame than they deserved and a better
+            /// session than the alternative, which is two people playing games that
+            /// stopped being the same one.
+            /// </remarks>
+            Sync = 7
         }
 
         /// <summary>Largest packet this protocol produces.</summary>
@@ -224,6 +250,75 @@ namespace LocalMultiplayerMod
         /// something that had been through a decimal round trip; this is agreed
         /// once, exactly, and then never sent again.
         /// </remarks>
+        /// <summary>
+        /// Writes both players' positions and velocities at a frame.
+        /// </summary>
+        /// <remarks>
+        /// Velocity as well as position, because a king put in the right place with
+        /// the wrong momentum leaves immediately and the two machines are apart
+        /// again on the next frame. Position is where the repair shows; velocity is
+        /// what makes it hold.
+        ///
+        /// Raw IEEE-754 bits, as the start packet does, so both machines hold the
+        /// identical value rather than two decimal roundings of it.
+        /// </remarks>
+        public static int WriteSync(byte[] buffer, long frame, float[] values, int count)
+        {
+            if (buffer == null || values == null || count <= 0 ||
+                buffer.Length < 6 + count * 4)
+            {
+                return 0;
+            }
+
+            buffer[0] = (byte)Kind.Sync;
+            WriteUInt32(buffer, 1, (uint)frame);
+            buffer[5] = (byte)count;
+
+            for (int i = 0; i < count; i++)
+            {
+                WriteUInt32(buffer, 6 + i * 4, ToBits(values[i]));
+            }
+
+            return 6 + count * 4;
+        }
+
+        public static bool ReadSync(
+            byte[] buffer,
+            int length,
+            out long frame,
+            float[] values,
+            out int count
+        )
+        {
+            frame = 0;
+            count = 0;
+
+            if (buffer == null || values == null || length < 6 ||
+                buffer[0] != (byte)Kind.Sync)
+            {
+                return false;
+            }
+
+            frame = ReadUInt32(buffer, 1);
+            int claimed = buffer[5];
+
+            // A truncated or lying length must not be trusted into a read past the
+            // end: this buffer came off the network.
+            if (claimed <= 0 || claimed > values.Length ||
+                6 + claimed * 4 > length)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < claimed; i++)
+            {
+                values[i] = FromBits(ReadUInt32(buffer, 6 + i * 4));
+            }
+
+            count = claimed;
+            return true;
+        }
+
         public static int WriteStart(byte[] buffer, long frame, float x, float y)
         {
             if (buffer == null || buffer.Length < 13)
@@ -330,7 +425,7 @@ namespace LocalMultiplayerMod
             }
 
             byte raw = buffer[0];
-            if (raw < (byte)Kind.Hello || raw > (byte)Kind.Checksum)
+            if (raw < (byte)Kind.Hello || raw > (byte)Kind.Sync)
             {
                 return false;
             }

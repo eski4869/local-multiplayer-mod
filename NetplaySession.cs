@@ -505,6 +505,10 @@ namespace LocalMultiplayerMod
             // before they had a chance to say anything.
             _framesSincePeerSpoke = 0;
 
+            // A repair owed to a session that has ended is not owed to the next one.
+            _beyondRepair = false;
+            _framesSinceSync = SyncInterval;
+
             // Left set, this would hold the world still after the session that
             // justified it has gone.
             _stallThisFrame = false;
@@ -549,6 +553,18 @@ namespace LocalMultiplayerMod
             {
                 _slowFrames++;
             }
+        }
+
+        /// <summary>
+        /// A total over the reporting second, printed as what one frame cost.
+        /// The frame budget is what everything here has to be judged against, so
+        /// nothing is reported in units that have to be divided first.
+        /// </summary>
+        private string PerFrame(double total)
+        {
+            return _frameTimings == 0
+                ? "0.00"
+                : (total / _frameTimings).ToString("F2");
         }
 
         private long _lastFrameTimestamp;
@@ -669,6 +685,84 @@ namespace LocalMultiplayerMod
         }
 
         /// <summary>
+        /// Simulates an extra frame, without drawing one, when this machine has
+        /// fallen behind.
+        /// </summary>
+        /// <remarks>
+        /// The other half of holding back the machine in front. Stalling alone lets
+        /// the pair keep pace but never closes a gap already opened; this closes it,
+        /// and the two together mean a machine that drops behind returns rather
+        /// than staying a fixed distance back for the rest of the session.
+        ///
+        /// **It is affordable because it skips the drawing.** This runs from the
+        /// update postfix, so the frame it adds costs a simulation and nothing else,
+        /// while the game draws once as usual - two frames of world for one frame of
+        /// pixels. Drawing is the larger half, so a machine too slow to run the game
+        /// at full rate can still often afford this, which is the whole reason it
+        /// works on the machine that needs it.
+        ///
+        /// **Only over input that has already arrived.** Racing ahead on guesses
+        /// would buy frames that a correction has to pay for again, and the machine
+        /// doing this is the one that can least afford to pay twice. Stopping at the
+        /// confirmed frontier also makes it self-limiting: it runs while there is
+        /// known ground to cover and stops on its own when there is not.
+        ///
+        /// One frame per real frame. Two at a time would recover faster and give
+        /// the slower machine three simulations in a budget it is already missing,
+        /// which is how catching up turns into falling further behind.
+        /// </remarks>
+        private void CatchUpIfBehind()
+        {
+            if (Resimulation.IsActive || IsGamePaused || _startFrame < 0)
+            {
+                return;
+            }
+
+            long confirmed = _remoteInputs.ConfirmedThrough;
+            if (confirmed - _frame <= CatchUpThreshold)
+            {
+                return;
+            }
+
+            EntityManager manager = EntityManager.instance;
+            if (manager == null)
+            {
+                return;
+            }
+
+            long began = FrameCost.Now;
+
+            _frame++;
+            _localFrameAdvantage.Add(LocalFrameAdvantage);
+            _clock.NoteSimulatedFrame();
+            CaptureLocalInput();
+            SendInputs();
+            RollBackIfMispredicted();
+
+            manager.Update(_frameDelta);
+
+            if (_remoteInputs.ConfirmedThrough < _frame)
+            {
+                StoreSnapshots(_frame);
+            }
+
+            _catchUpFrames++;
+            FrameCost.AddCatchUp(began);
+        }
+
+        private int _catchUpFrames;
+
+        /// <summary>
+        /// How far behind the confirmed input this machine must be before it starts
+        /// covering ground twice as fast.
+        ///
+        /// Not one or two frames: the input delay means the simulation is meant to
+        /// run a little behind what has arrived, and treating that as lateness would
+        /// have every machine permanently catching up on nothing.
+        /// </summary>
+        private const int CatchUpThreshold = 4;
+
+        /// <summary>
         /// Whether the game is paused at all, from either side. Read through the
         /// game's own manager so both pauses mean the same thing - the peer's
         /// arrives here too, because <c>NetplayPausePatch</c> reports it through
@@ -738,6 +832,9 @@ namespace LocalMultiplayerMod
             {
                 StoreSnapshots(_frame);
             }
+
+            SendSyncIfBeyondRepair();
+            CatchUpIfBehind();
 
             TraceFrame();
             ReportCost();
@@ -993,6 +1090,23 @@ namespace LocalMultiplayerMod
                 _rollbackCount++;
                 _resimulatedFrames += result.Replayed;
                 _resimulateMilliseconds += timer.Elapsed.TotalMilliseconds;
+                return;
+            }
+
+            // A correction that was needed and could not be made. Recomputing has
+            // run out of road: there is no saved frame to return to, or returning
+            // would cost more than a frame has. Every later correction inherits the
+            // divergence this one could not repair, so nothing downstream fixes it.
+            //
+            // This used to end here, with a notice and a drift. It is now the
+            // moment the host declares where everyone is instead - which is the
+            // trade this whole mechanism exists to make, taken at the one point
+            // where the cheaper option has genuinely been exhausted.
+            if (result.Outcome == Correction.Outcome.TooLate ||
+                result.Outcome == Correction.Outcome.TooExpensive ||
+                result.Outcome == Correction.Outcome.RestoreFailed)
+            {
+                _beyondRepair = true;
             }
         }
 
@@ -1148,12 +1262,27 @@ namespace LocalMultiplayerMod
                     : (_frameMilliseconds / _frameTimings).ToString("F2")) +
                 " slow=" + _slowFrames +
 
+                // This mod's own share of that frame, broken out. Per frame, so it
+                // subtracts directly from frame_ms and can be compared against the
+                // 16.67ms the game has.
+                " p2_ms=" + PerFrame(FrameCost.AdditionalPlayerMilliseconds) +
+                " scope_ms=" + PerFrame(FrameCost.ScopeMilliseconds) +
+                " draw_ms=" + PerFrame(FrameCost.DrawMilliseconds) +
+                " catchup=" + _catchUpFrames +
+                " sync_out=" + _syncsSent +
+                " sync_in=" + _syncsApplied +
+                " catchup_ms=" + PerFrame(FrameCost.CatchUpMilliseconds) +
+
                 " compared=" + _resolver.Compared +
                 " skip_noactual=" + _resolver.SkippedNoActual +
                 " skip_noused=" + _resolver.SkippedNoUsed
             );
 
             _resolver.ResetCounters();
+            _catchUpFrames = 0;
+            _syncsSent = 0;
+            _syncsApplied = 0;
+            FrameCost.Reset();
             _frameMilliseconds = 0;
             _frameTimings = 0;
             _slowFrames = 0;
@@ -1568,6 +1697,10 @@ namespace LocalMultiplayerMod
                     HandleStart(payload, length);
                     break;
 
+                case NetplayPacket.Kind.Sync:
+                    HandleSync(payload, length);
+                    break;
+
                 case NetplayPacket.Kind.Checksum:
                     HandleChecksum(payload, length);
                     break;
@@ -1646,6 +1779,150 @@ namespace LocalMultiplayerMod
                 );
             }
         }
+
+        /// <summary>
+        /// Four numbers per player - where they are and where they are going.
+        /// </summary>
+        private const int SyncValuesPerPlayer = 4;
+
+        private readonly float[] _syncValues =
+            new float[SyncValuesPerPlayer * MultiplayerRuntime.MaximumPlayers];
+
+        /// <summary>
+        /// The host putting the session back together by declaring where everyone
+        /// is, when recomputing can no longer reach.
+        /// </summary>
+        /// <remarks>
+        /// **Only the host sends this, and it decides alone.** Two machines that
+        /// have stopped agreeing cannot be asked to agree on who is right - that is
+        /// the same problem again, one level up. The host is the one fact Steam
+        /// guarantees both read identically, so it is the one that says.
+        ///
+        /// Throttled, because the condition that triggers it persists for a moment
+        /// after it is answered: the guest needs frames to receive, apply and be
+        /// seen applying it, and a second declaration arriving mid-repair undoes
+        /// the first.
+        /// </remarks>
+        private void SendSyncIfBeyondRepair()
+        {
+            if (!_transport.IsLobbyOwner || !IsPlaying || _startFrame < 0)
+            {
+                return;
+            }
+
+            if (_framesSinceSync < SyncInterval)
+            {
+                _framesSinceSync++;
+                return;
+            }
+
+            if (!_beyondRepair)
+            {
+                return;
+            }
+
+            _beyondRepair = false;
+            _framesSinceSync = 0;
+
+            int count = 0;
+            for (int number = 1; number <= MultiplayerRuntime.PlayerCount; number++)
+            {
+                PlayerContext context = MultiplayerRuntime.GetContext(number);
+                if (context == null || !context.IsAlive || context.Body == null)
+                {
+                    return;
+                }
+
+                _syncValues[count++] = context.Body.Position.X;
+                _syncValues[count++] = context.Body.Position.Y;
+                _syncValues[count++] = context.Body.Velocity.X;
+                _syncValues[count++] = context.Body.Velocity.Y;
+            }
+
+            int written = NetplayPacket.WriteSync(
+                _sendBuffer, _frame, _syncValues, count
+            );
+
+            if (written > 0)
+            {
+                _transport.Broadcast(_sendBuffer, written);
+                _syncsSent++;
+            }
+        }
+
+        private void HandleSync(byte[] payload, int length)
+        {
+            // The host does not take instruction on where things are; it is the one
+            // giving it. A packet arriving the other way is either an older build
+            // or a lobby whose ownership moved, and adopting it would have the two
+            // machines pulling each other back and forth.
+            if (_transport.IsLobbyOwner || !IsPlaying)
+            {
+                return;
+            }
+
+            long frame;
+            int count;
+            if (!NetplayPacket.ReadSync(
+                payload, length, out frame, _syncValues, out count
+            ))
+            {
+                return;
+            }
+
+            if (count < MultiplayerRuntime.PlayerCount * SyncValuesPerPlayer)
+            {
+                return;
+            }
+
+            int at = 0;
+            for (int number = 1; number <= MultiplayerRuntime.PlayerCount; number++)
+            {
+                PlayerContext context = MultiplayerRuntime.GetContext(number);
+                if (context == null || !context.IsAlive || context.Body == null)
+                {
+                    return;
+                }
+
+                context.Body.Position = new Vector2(
+                    _syncValues[at], _syncValues[at + 1]
+                );
+                context.Body.Velocity = new Vector2(
+                    _syncValues[at + 2], _syncValues[at + 3]
+                );
+                at += SyncValuesPerPlayer;
+
+                // The camera followed a king who is no longer where it was looking.
+                context.CameraSeeded = false;
+            }
+
+            // Adopting the host's clock as well as its positions. Landing on the
+            // right spot at the wrong frame just reopens the gap that caused this.
+            _frame = frame;
+
+            // Everything kept for correcting describes a history this machine has
+            // just stopped having. Left in place, the next correction would rewind
+            // into it and undo the repair.
+            _rollback.Clear();
+            _usedRemote.Reset();
+            _lastAppliedRemote = frame;
+
+            NetplayNotice.Show("resynchronised with " + PeerNameOrDefault);
+            _syncsApplied++;
+        }
+
+        /// <summary>Set when a correction was needed and could not be made.</summary>
+        private bool _beyondRepair;
+
+        private int _framesSinceSync;
+        private int _syncsSent;
+        private int _syncsApplied;
+
+        /// <summary>
+        /// Half a second between declarations, so one has time to be applied and
+        /// observed before another is considered.
+        /// </summary>
+        private const int SyncInterval = 30;
 
         private void HandleInput(byte[] payload, int length)
         {
@@ -1835,23 +2112,25 @@ namespace LocalMultiplayerMod
                 NetplayNotice.Show("waiting for " + PeerNameOrDefault);
             }
 
-            // A peer that has genuinely stopped - alt-tabbed, crashed, gone - must
-            // not hold this game still for ever. Past this the gap is accepted and
-            // the guessing resumes, which is the wrong world but a running one;
-            // whether to leave is the player's call, not something to decide by
-            // freezing until they force-quit.
-            if (_consecutiveStalls > MaxStallFrames)
-            {
-                if (_consecutiveStalls == MaxStallFrames + 1)
-                {
-                    NetplayNotice.Show(
-                        PeerNameOrDefault + " is not responding"
-                    );
-                }
-
-                return false;
-            }
-
+            // **This wait is not given up on.**
+            //
+            // It was, after nine frames, so that a peer who had crashed could not
+            // freeze the game for ever. That reasoning was right and the remedy was
+            // in the wrong place: giving up turns the prediction window from a
+            // bound into a preference, and a machine that is merely faster than its
+            // peer then runs away without limit. The host's log shows exactly that
+            // - stall_pred=60 against stalled=0, every frame deciding to wait and
+            // every frame proceeding anyway - until it was a hundred and ninety
+            // seven frames, better than three seconds, ahead. For all of it the
+            // other king was being driven entirely by guesswork. That is not
+            // desynchronisation; there was simply nobody there.
+            //
+            // A peer who has actually gone is handled by silence instead, two
+            // seconds of it, which ends the session and says who left. That
+            // separates "gone" from "slow" by asking the right question: a slow
+            // peer keeps sending, so it keeps this wait honest, and waiting is
+            // exactly what should happen - both machines then run at the speed of
+            // the slower one, which is the trade rollback makes.
             return true;
         }
 
