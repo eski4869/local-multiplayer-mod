@@ -383,8 +383,49 @@ namespace LocalMultiplayerMod
             Raise(RosterChanged);
         }
 
-        /// <summary>Sends to every peer. Unreliable, by design.</summary>
+        /// <summary>
+        /// Sends to every peer, unreliably.
+        /// </summary>
+        /// <remarks>
+        /// Right for input and only for input. Every input packet carries the last
+        /// sixteen frames, so a lost one is covered by the next; waiting for a
+        /// retransmission would deliver it after the frame that needed it and cost
+        /// more than the loss did.
+        ///
+        /// Nothing else in this protocol has that property. See
+        /// <see cref="BroadcastReliable"/>.
+        /// </remarks>
         public void Broadcast(byte[] payload, int length)
+        {
+            Send(payload, length, EP2PSend.k_EP2PSendUnreliable);
+        }
+
+        /// <summary>
+        /// Sends to every peer, with delivery guaranteed and order preserved.
+        /// </summary>
+        /// <remarks>
+        /// **For anything sent once that changes what a session is.** Those were
+        /// going out unreliably too, which meant the whole session rested on single
+        /// datagrams that were allowed to vanish.
+        ///
+        /// The origin packet is the clearest case. It is sent once, and it is what
+        /// tells the guest which frame the session begins on; without it the guest
+        /// sits in a started session that never advances and never sends, and the
+        /// host waits for a peer who from its side has simply gone quiet. One lost
+        /// datagram, and everything built above it - the corrections, the waiting,
+        /// the catching up - is standing on nothing. The same is true of pause,
+        /// resume, and the host's resynchronisation.
+        ///
+        /// These are rare and small, so guaranteeing them costs nothing that
+        /// matters. Reliability is not a property to apply evenly; it is chosen per
+        /// message, from whether losing that message is recoverable.
+        /// </remarks>
+        public void BroadcastReliable(byte[] payload, int length)
+        {
+            Send(payload, length, EP2PSend.k_EP2PSendReliable);
+        }
+
+        private void Send(byte[] payload, int length, EP2PSend how)
         {
             if (payload == null || length <= 0 || !IsInLobby)
             {
@@ -397,7 +438,7 @@ namespace LocalMultiplayerMod
                     _peers[i],
                     payload,
                     (uint)length,
-                    EP2PSend.k_EP2PSendUnreliable,
+                    how,
                     Channel
                 );
             }

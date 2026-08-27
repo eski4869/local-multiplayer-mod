@@ -504,6 +504,7 @@ namespace LocalMultiplayerMod
             // Left counting, this would have the next session declare its peer gone
             // before they had a chance to say anything.
             _framesSincePeerSpoke = 0;
+            _peerHasSpoken = false;
 
             // Left where the ended session put it, the next one would report
             // nothing until it had run as many frames as this one did.
@@ -670,7 +671,20 @@ namespace LocalMultiplayerMod
             // seconds of a king being puppeted by a guess, snapshots still being
             // taken for corrections that could never arrive. Whatever that looks
             // like on screen, it is not the other player.
-            if (++_framesSincePeerSpoke > PeerSilenceLimit)
+            // Only once they have spoken at all.
+            //
+            // Silence means "was playing, stopped". Applied to a peer who has not
+            // started yet it means something else entirely, and it closed a session
+            // two seconds after it opened: the guest had not sent its first input,
+            // the host called that a disconnection, and the session ended before it
+            // began. A peer still getting to the level is not a peer who has left.
+            //
+            // What made that state reachable at all was the origin packet going out
+            // unreliably - one datagram, sent once, and a guest that never got it
+            // never advances and never speaks. That is fixed at the transport now,
+            // which is where it belonged; this stays because a timeout should
+            // measure what its name says regardless.
+            if (_peerHasSpoken && ++_framesSincePeerSpoke > PeerSilenceLimit)
             {
                 NetplayNotice.Show(PeerNameOrDefault + " disconnected");
                 Leave();
@@ -987,7 +1001,7 @@ namespace LocalMultiplayerMod
                 _sendBuffer,
                 paused ? NetplayPacket.Kind.Pause : NetplayPacket.Kind.Resume
             );
-            _transport.Broadcast(_sendBuffer, length);
+            _transport.BroadcastReliable(_sendBuffer, length);
         }
 
         /// <summary>
@@ -1061,7 +1075,7 @@ namespace LocalMultiplayerMod
                 (byte)ModEntry.PlayerCount,
                 true
             );
-            _transport.Broadcast(_sendBuffer, length);
+            _transport.BroadcastReliable(_sendBuffer, length);
         }
 
         /// <summary>
@@ -1431,7 +1445,7 @@ namespace LocalMultiplayerMod
             // and leaves both runs alone.
             Vector2 at = me.Body.Position;
             int length = NetplayPacket.WriteStart(_sendBuffer, _frame, at.X, at.Y);
-            _transport.Broadcast(_sendBuffer, length);
+            _transport.BroadcastReliable(_sendBuffer, length);
         }
 
         private void HandleStart(byte[] payload, int length)
@@ -1481,7 +1495,7 @@ namespace LocalMultiplayerMod
                     me.Body.Position.X,
                     me.Body.Position.Y
                 );
-                _transport.Broadcast(_sendBuffer, reply);
+                _transport.BroadcastReliable(_sendBuffer, reply);
             }
 
             NetplayNotice.Show("started with the host at frame " + frame);
@@ -1869,7 +1883,7 @@ namespace LocalMultiplayerMod
 
             if (written > 0)
             {
-                _transport.Broadcast(_sendBuffer, written);
+                _transport.BroadcastReliable(_sendBuffer, written);
                 _syncsSent++;
             }
         }
@@ -1985,6 +1999,7 @@ namespace LocalMultiplayerMod
 
             _remoteFrameAdvantage.Add(frameAdvantage);
             _framesSincePeerSpoke = 0;
+            _peerHasSpoken = true;
 
             for (int i = 0; i < count; i++)
             {
@@ -2002,6 +2017,9 @@ namespace LocalMultiplayerMod
         /// - see BeforeGameUpdate.
         /// </summary>
         private long _peerFrame = -1;
+
+        /// <summary>Whether the peer has ever sent an input.</summary>
+        private bool _peerHasSpoken;
 
         /// <summary>Frames since anything arrived from the peer.</summary>
         private int _framesSincePeerSpoke;
