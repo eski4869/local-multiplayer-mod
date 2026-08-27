@@ -1737,7 +1737,18 @@ namespace LocalMultiplayerMod
 
         private void OnRosterChanged()
         {
-            if (_transport.Peers.Count == 0 && _phase == Phase.Playing)
+            // From any state a session can be in, not only from play.
+            //
+            // This asked for Playing, so a peer who left during the handshake was
+            // not noticed at all: the session stayed in Handshaking over an empty
+            // lobby, and ten seconds later the handshake clock reported "could not
+            // agree a session" - which is a different thing from "they left", and
+            // sends the player looking for a disagreement that never happened.
+            //
+            // That is exactly how the last failure presented. A guest on an older
+            // build read the lobby, refused, and left; the host saw none of it and
+            // blamed the handshake.
+            if (_transport.Peers.Count == 0 && _phase != Phase.Idle)
             {
                 NetplayNotice.Show(
                     _transport.IsLobbyOwner
