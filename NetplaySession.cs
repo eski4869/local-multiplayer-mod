@@ -1775,7 +1775,19 @@ namespace LocalMultiplayerMod
             // That is exactly how the last failure presented. A guest on an older
             // build read the lobby, refused, and left; the host saw none of it and
             // blamed the handshake.
-            if (_transport.Peers.Count == 0 && _phase != Phase.Idle)
+            // Not from WaitingForPeer, where an empty lobby is the whole point.
+            //
+            // Widening this from "only while Playing" to "from any state" was meant
+            // to catch a peer leaving during the handshake, and caught the host's
+            // own newly opened lobby as well: a lobby with nobody in it was read as
+            // a guest departing, and it closed itself the instant it opened.
+            //
+            // "Nobody is here" and "somebody left" are the same observation and
+            // different events. Only the state says which, and WaitingForPeer is
+            // exactly the state that means the first one.
+            if (_transport.Peers.Count == 0 &&
+                _phase != Phase.Idle &&
+                _phase != Phase.WaitingForPeer)
             {
                 NetplayNotice.Show(
                     _transport.IsLobbyOwner

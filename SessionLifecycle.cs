@@ -168,7 +168,16 @@ namespace LocalMultiplayerMod
         /// <summary>Everyone else has gone.</summary>
         public void PeerLeft(bool isLobbyOwner)
         {
-            if (_phase == Phase.Idle)
+            // Nothing to leave, or nobody had arrived to leave.
+            //
+            // WaitingForPeer is an empty lobby on purpose - it is what a host sits
+            // in between opening one and somebody accepting. Treating "the lobby is
+            // empty" as "the guest left" there closes the lobby the instant it
+            // opens, which is what shipped.
+            //
+            // The two are the same observation. Only the state distinguishes them,
+            // and this is the state that means nobody has come yet.
+            if (_phase == Phase.Idle || _phase == Phase.WaitingForPeer)
             {
                 return;
             }

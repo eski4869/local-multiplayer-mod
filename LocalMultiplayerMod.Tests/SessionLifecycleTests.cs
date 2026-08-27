@@ -183,6 +183,41 @@ namespace LocalMultiplayerMod.Tests
         }
 
         [TestMethod]
+        public void AnEmptyLobbyIsNotAGuestLeaving()
+        {
+            var effects = new Effects();
+            var life = new SessionLifecycle(effects);
+            life.LobbyEntered(true);
+
+            // A host between opening a lobby and somebody accepting has an empty
+            // lobby, and Steam reports that the same way it reports the last
+            // person leaving one. Reading the second from the first closed the
+            // lobby the instant it opened - "lobby open" and "your guest left" on
+            // consecutive lines of a real log.
+            life.PeerLeft(true);
+
+            Assert.AreEqual(Phase.WaitingForPeer, life.Current);
+            Assert.IsTrue(effects.InLobby, "the lobby closed itself");
+            CollectionAssert.DoesNotContain(effects.Log, "notice: your guest left");
+        }
+
+        [TestMethod]
+        public void AGuestLeavingDuringTheHandshakeIsNoticed()
+        {
+            var effects = new Effects();
+            SessionLifecycle life = Hosting(effects);
+
+            // And the case the widening was for: somebody who did arrive and then
+            // went. Handled only during play once, so a guest refusing on an older
+            // build and leaving went unnoticed until the handshake clock blamed a
+            // disagreement that had not happened.
+            life.PeerLeft(true);
+
+            Assert.AreEqual(Phase.Idle, life.Current);
+            CollectionAssert.Contains(effects.Log, "notice: your guest left");
+        }
+
+        [TestMethod]
         public void EveryStateReachesIdleAgain()
         {
             // The property behind both failures, checked directly rather than one
