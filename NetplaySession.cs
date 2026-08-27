@@ -388,6 +388,11 @@ namespace LocalMultiplayerMod
         {
             if (_phase != Phase.Idle)
             {
+                // Was silent. A button that does nothing and logs nothing cannot be
+                // told apart from a button that is not connected to anything.
+                NetplayNotice.Show(
+                    "cannot open a lobby - already " + Describe(_phase)
+                );
                 return;
             }
 
@@ -403,10 +408,31 @@ namespace LocalMultiplayerMod
         /// An invitation puts the guest at the host's mercy for even getting in.
         /// A friends-only lobby is visible to friends, so it can simply be found.
         /// </summary>
+        /// <summary>What a phase means to somebody who pressed a button.</summary>
+        private static string Describe(Phase phase)
+        {
+            switch (phase)
+            {
+                case Phase.WaitingForPeer:
+                    return "waiting for somebody to join";
+                case Phase.NeedsLevel:
+                    return "waiting for the right level";
+                case Phase.Handshaking:
+                    return "agreeing a session";
+                case Phase.Playing:
+                    return "in a session";
+                default:
+                    return "busy";
+            }
+        }
+
         public void Join()
         {
             if (_phase != Phase.Idle)
             {
+                NetplayNotice.Show(
+                    "cannot search - already " + Describe(_phase)
+                );
                 return;
             }
 

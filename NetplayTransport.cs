@@ -326,10 +326,48 @@ namespace LocalMultiplayerMod
         /// <summary>
         /// Opens a friends-only lobby.
         /// </summary>
+        /// <summary>
+        /// Opens a lobby, or says why it will not.
+        /// </summary>
+        /// <remarks>
+        /// **Both refusals here used to be silent.** Pressing the button did
+        /// nothing, and nothing appeared in the log either - not even the failure
+        /// message below this, because Steam was never asked. There is no way to
+        /// tell that apart from a button that is not wired up.
+        ///
+        /// The one that bites is Steam being unavailable, because
+        /// <see cref="Install"/> declines just as quietly on the same condition: no
+        /// callbacks are registered, so even a lobby that did get created would
+        /// have nothing listening for the result. Everything downstream then waits
+        /// for an answer that cannot arrive.
+        /// </remarks>
         public void CreateLobby()
         {
-            if (!IsAvailable || IsInLobby)
+            if (!IsAvailable)
             {
+                Report(
+                    "cannot open a lobby - Steam is not available. " +
+                    "Netplay needs the game started through Steam."
+                );
+                return;
+            }
+
+            if (!_installed)
+            {
+                // Install declines silently when Steam was unavailable at startup,
+                // and it is never retried. A lobby opened now would be created by
+                // Steam and never reported back.
+                Install();
+                if (!_installed)
+                {
+                    Report("cannot open a lobby - netplay did not start up");
+                    return;
+                }
+            }
+
+            if (IsInLobby)
+            {
+                Report("already in a lobby");
                 return;
             }
 
@@ -337,6 +375,11 @@ namespace LocalMultiplayerMod
                 ELobbyType.k_ELobbyTypeFriendsOnly,
                 MaxMembers
             );
+        }
+
+        private static void Report(string message)
+        {
+            NetplayNotice.Show(message);
         }
 
         /// <summary>
