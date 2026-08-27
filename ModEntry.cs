@@ -453,6 +453,14 @@ namespace LocalMultiplayerMod
                 "Game1.Update"
             );
 
+            // The other end of the frame measurement.
+            complete &= TryPatch(
+                harmony,
+                AccessTools.Method(typeof(Game1), "Draw"),
+                typeof(LocalMultiplayerFrameEndPatch),
+                "Game1.Draw (frame budget)"
+            );
+
             // Battle mode. Stomps are resolved after the whole frame has moved,
             // so this is a second patch on the same method rather than more work
             // inside the prefix above.
@@ -917,6 +925,24 @@ namespace LocalMultiplayerMod
         }
     }
 
+    /// <summary>
+    /// Stamps the end of a frame's work.
+    /// </summary>
+    /// <remarks>
+    /// <c>Game1.Draw</c> is the last thing a frame does - from the decompiled
+    /// source, it loads textures, renders to its target, blits it and calls the
+    /// base. Ending the measurement here and starting it in the update prefix puts
+    /// everything the frame does between the two stamps, whichever piece of
+    /// hardware does it.
+    /// </remarks>
+    internal static class LocalMultiplayerFrameEndPatch
+    {
+        public static void Postfix()
+        {
+            FrameBudget.NoteFrameEnd();
+        }
+    }
+
     internal static class LocalMultiplayerGameUpdatePatch
     {
         public static bool Prefix(Microsoft.Xna.Framework.GameTime gameTime)
@@ -955,9 +981,13 @@ namespace LocalMultiplayerMod
             // It is the difference between "the slower machine cannot run this
             // game at sixty frames a second" and "this mod is making it miss", and
             // no amount of reasoning from either side separates them.
-            ModEntry.Netplay.NoteFrameTiming(
-                gameTime != null && gameTime.IsRunningSlowly
-            );
+            bool runningSlowly = gameTime != null && gameTime.IsRunningSlowly;
+            ModEntry.Netplay.NoteFrameTiming(runningSlowly);
+
+            // The same reading, reported whether or not a session is running, so
+            // the question can be asked of one machine on its own.
+            FrameBudget.Enabled = ModEntry.Diagnostics.FrameBudget;
+            FrameBudget.Note(runningSlowly);
 
             ModEntry.Netplay.BeforeGameUpdate(delta);
             return true;
@@ -1031,6 +1061,19 @@ namespace LocalMultiplayerMod
     /// </summary>
     public class DiagnosticsPreferences
     {
+        /// <summary>
+        /// Whether this machine finishes its frames, reported once a second
+        /// regardless of what the mod is doing.
+        /// </summary>
+        /// <remarks>
+        /// For separating "this machine is too slow for this game" from "this mod
+        /// makes it too slow", which needs one machine rather than two: run alone,
+        /// run with a second player locally, compare. The equivalent numbers used
+        /// to appear only inside a netplay session, where the answer arrived
+        /// tangled up with everything the network was doing.
+        /// </remarks>
+        public bool FrameBudget { get; set; } = false;
+
         /// <summary>
         /// Whether <c>PlayerContext.Screen</c> - the screen collision resolves
         /// against for a player who is not the global camera - has drifted from
