@@ -82,6 +82,7 @@
 		<Compile Include="RemoteInputResolver.cs" />
 		<Compile Include="Correction.cs" />
 		<Compile Include="FrameCost.cs" />
+		<Compile Include="SessionLifecycle.cs" />
 		<Compile Include="NetplayLevelIdentity.cs" />
 		<Compile Include="NetplayNameTags.cs" />
 		<Compile Include="NetplayNotice.cs" />

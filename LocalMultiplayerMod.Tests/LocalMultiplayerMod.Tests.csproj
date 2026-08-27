@@ -24,5 +24,6 @@
     <Compile Include="..\RollbackPlan.cs" Link="RollbackPlan.cs" />
     <Compile Include="..\RemoteInputResolver.cs" Link="RemoteInputResolver.cs" />
     <Compile Include="..\Correction.cs" Link="Correction.cs" />
+    <Compile Include="..\SessionLifecycle.cs" Link="SessionLifecycle.cs" />
   </ItemGroup>
 </Project>

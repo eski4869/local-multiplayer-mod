@@ -24,7 +24,7 @@ namespace LocalMultiplayerMod
         /// misread. Checked at handshake so a mismatch is refused with a reason
         /// rather than showing up as a peer who behaves strangely.
         /// </summary>
-        public const byte ProtocolVersion = 3;
+        public const byte ProtocolVersion = 4;
 
         public enum Kind : byte
         {
@@ -86,7 +86,36 @@ namespace LocalMultiplayerMod
             /// session than the alternative, which is two people playing games that
             /// stopped being the same one.
             /// </remarks>
-            Sync = 7
+            Sync = 7,
+
+            /// <summary>
+            /// I am not going to play with you, and this is why.
+            /// </summary>
+            /// <remarks>
+            /// A refusal used to be enacted without being communicated: the
+            /// refusing side reported the reason to its own player and left, and
+            /// the other side saw somebody arrive and depart without explanation.
+            /// The two people are usually in the same room or the same call, so the
+            /// missing half was supplied out loud - "it says our versions are
+            /// different" - which works and is not a design.
+            ///
+            /// The reason travels as a code rather than a sentence. A build that
+            /// refuses is by definition a build that might not share this one's
+            /// wording, and a numbered reason survives that where text does not.
+            /// </remarks>
+            Refused = 8
+        }
+
+        /// <summary>Why a session was refused.</summary>
+        public enum RefusalReason : byte
+        {
+            Unknown = 0,
+
+            /// <summary>Different builds of this mod.</summary>
+            Protocol = 1,
+
+            /// <summary>Different levels, or different versions of one.</summary>
+            Level = 2
         }
 
         /// <summary>Largest packet this protocol produces.</summary>
@@ -319,6 +348,43 @@ namespace LocalMultiplayerMod
             return true;
         }
 
+        /// <summary>Refusing a session, with the reason.</summary>
+        public static int WriteRefused(byte[] buffer, RefusalReason reason)
+        {
+            if (buffer == null || buffer.Length < 2)
+            {
+                return 0;
+            }
+
+            buffer[0] = (byte)Kind.Refused;
+            buffer[1] = (byte)reason;
+            return 2;
+        }
+
+        public static bool ReadRefused(
+            byte[] buffer,
+            int length,
+            out RefusalReason reason
+        )
+        {
+            reason = RefusalReason.Unknown;
+
+            if (buffer == null || length < 2 || buffer[0] != (byte)Kind.Refused)
+            {
+                return false;
+            }
+
+            byte raw = buffer[1];
+
+            // A reason this build does not recognise is still a refusal, and
+            // saying so beats saying nothing.
+            reason = raw > (byte)RefusalReason.Level
+                ? RefusalReason.Unknown
+                : (RefusalReason)raw;
+
+            return true;
+        }
+
         public static int WriteStart(byte[] buffer, long frame, float x, float y)
         {
             if (buffer == null || buffer.Length < 13)
@@ -425,7 +491,7 @@ namespace LocalMultiplayerMod
             }
 
             byte raw = buffer[0];
-            if (raw < (byte)Kind.Hello || raw > (byte)Kind.Sync)
+            if (raw < (byte)Kind.Hello || raw > (byte)Kind.Refused)
             {
                 return false;
             }

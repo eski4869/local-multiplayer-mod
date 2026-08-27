@@ -311,7 +311,8 @@ namespace LocalMultiplayerMod
                 Refuse(
                     "the host is running a different version of this mod " +
                     "(protocol " + protocol + " against " +
-                    NetplayPacket.ProtocolVersion + ")"
+                    NetplayPacket.ProtocolVersion + ")",
+                    NetplayPacket.RefusalReason.Protocol
                 );
                 return;
             }
@@ -1777,6 +1778,10 @@ namespace LocalMultiplayerMod
                     HandleStart(payload, length);
                     break;
 
+                case NetplayPacket.Kind.Refused:
+                    HandleRefused(payload, length);
+                    break;
+
                 case NetplayPacket.Kind.Sync:
                     HandleSync(payload, length);
                     break;
@@ -1810,7 +1815,8 @@ namespace LocalMultiplayerMod
                 Refuse(
                     "the other player is running a different version of this mod " +
                     "(protocol " + protocol + " against " +
-                    NetplayPacket.ProtocolVersion + ")"
+                    NetplayPacket.ProtocolVersion + ")",
+                    NetplayPacket.RefusalReason.Protocol
                 );
                 return;
             }
@@ -1821,7 +1827,10 @@ namespace LocalMultiplayerMod
                 // Named rather than left to show up as a peer standing on nothing.
                 // A workshop map updates in place under one id, so "the same map"
                 // is not the same claim as the same block layout.
-                Refuse("the two of you are on different levels, or different versions of one");
+                Refuse(
+                    "the two of you are on different levels, or different versions of one",
+                    NetplayPacket.RefusalReason.Level
+                );
                 return;
             }
 
@@ -1927,6 +1936,54 @@ namespace LocalMultiplayerMod
             {
                 _transport.BroadcastReliable(_sendBuffer, written);
                 _syncsSent++;
+            }
+        }
+
+        /// <summary>
+        /// The other side saying it will not play, and why.
+        /// </summary>
+        /// <remarks>
+        /// Reported rather than acted on beyond ending the session. There is
+        /// nothing to negotiate: the disagreement that caused it - different
+        /// builds, different levels - is not one either machine can settle from
+        /// here. What the player needs is to know which of the two it was, because
+        /// that is the difference between updating the mod and picking a different
+        /// map.
+        /// </remarks>
+        private void HandleRefused(byte[] payload, int length)
+        {
+            NetplayPacket.RefusalReason reason;
+            if (!NetplayPacket.ReadRefused(payload, length, out reason))
+            {
+                return;
+            }
+
+            string said;
+            switch (reason)
+            {
+                case NetplayPacket.RefusalReason.Protocol:
+                    said = "they are running a different version of this mod";
+                    break;
+
+                case NetplayPacket.RefusalReason.Level:
+                    said = "they are on a different level, or a different version of one";
+                    break;
+
+                default:
+                    said = "they did not say why";
+                    break;
+            }
+
+            NetplayNotice.Show(PeerNameOrDefault + " refused - " + said);
+
+            _refusing = true;
+            try
+            {
+                Leave();
+            }
+            finally
+            {
+                _refusing = false;
             }
         }
 
@@ -2370,6 +2427,32 @@ namespace LocalMultiplayerMod
         /// </summary>
         private void Refuse(string reason)
         {
+            Refuse(reason, NetplayPacket.RefusalReason.Unknown);
+        }
+
+        /// <summary>
+        /// Refusing a session, and telling the other side so.
+        /// </summary>
+        /// <remarks>
+        /// The telling used to be missing. The refusing side reported the reason to
+        /// its own player and left, and the other side saw somebody arrive and
+        /// depart with no explanation - which works when the two people are in the
+        /// same room and can say it out loud, and is not a design.
+        ///
+        /// Sent before leaving, reliably, because there is exactly one chance to
+        /// send it.
+        /// </remarks>
+        private void Refuse(string reason, NetplayPacket.RefusalReason code)
+        {
+            if (code != NetplayPacket.RefusalReason.Unknown)
+            {
+                int length = NetplayPacket.WriteRefused(_sendBuffer, code);
+                if (length > 0)
+                {
+                    _transport.BroadcastReliable(_sendBuffer, length);
+                }
+            }
+
             NetplayNotice.Show("refused - " + reason);
 
             // **Refusing a session is not a state to stay in.**
