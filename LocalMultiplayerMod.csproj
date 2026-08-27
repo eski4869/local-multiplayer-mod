@@ -84,6 +84,7 @@
 		<Compile Include="FrameCost.cs" />
 		<Compile Include="SessionLifecycle.cs" />
 		<Compile Include="FrameBudget.cs" />
+		<Compile Include="SnapshotCost.cs" />
 		<Compile Include="NetplayLevelIdentity.cs" />
 		<Compile Include="NetplayNameTags.cs" />
 		<Compile Include="NetplayNotice.cs" />
