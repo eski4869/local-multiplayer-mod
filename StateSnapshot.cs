@@ -151,6 +151,9 @@ namespace LocalMultiplayerMod
         /// Writes captured values back into the same object.
         /// </summary>
         /// <returns>False when the values do not describe this object.</returns>
+        /// <summary>Field writes that threw since the counter was last read.</summary>
+        public static int FailedWrites;
+
         public static bool Restore(object target, object[] values)
         {
             if (target == null || values == null)
@@ -199,6 +202,15 @@ namespace LocalMultiplayerMod
                     // A field that cannot be written is one the snapshot does not
                     // cover. Reported through DescribeUncoveredReferences rather
                     // than thrown, so a rollback is never abandoned halfway.
+                    //
+                    // Counted, because a throw costs far more than the write it
+                    // replaced and this loop runs over every field of every root
+                    // of every player. Whether restoring is slow because
+                    // reflection is slow or because it is throwing dozens of
+                    // exceptions is the difference between a cost that can be
+                    // removed and one that cannot, and guessing between them is
+                    // how this file has been wrong before.
+                    FailedWrites++;
                 }
             }
 

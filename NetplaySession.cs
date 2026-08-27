@@ -903,6 +903,19 @@ namespace LocalMultiplayerMod
                 return;
             }
 
+            // A frame that was held back produced nothing to record. This ran on
+            // stalled frames too, re-taking a snapshot of a frame already stored
+            // for as long as the wait lasted - the most expensive thing done per
+            // frame, repeated on the machine that is waiting because it has no
+            // time to spare. The reporting still runs: a stall is exactly when
+            // somebody wants to see the numbers.
+            if (_stallThisFrame)
+            {
+                TraceFrame();
+                ReportCost();
+                return;
+            }
+
             // Only frames a correction could return to.
             //
             // A rollback restores to the first frame whose guess was wrong, and a
@@ -1245,7 +1258,24 @@ namespace LocalMultiplayerMod
 
             public bool Restore(long simulationFrame)
             {
-                return _session.RestoreAll(simulationFrame);
+                // Timed apart from the replay it precedes. A correction measured
+                // thirteen milliseconds per replayed frame on the slower machine
+                // against about two for an ordinary one, and the two halves were
+                // reported as a single number - so which of them was expensive was
+                // not knowable. Putting a player back is a reflective write over
+                // every field of every root; replaying is the game simulating a
+                // frame. No reason to expect those to cost the same.
+                long began = FrameCost.Now;
+                try
+                {
+                    return _session.RestoreAll(simulationFrame);
+                }
+                finally
+                {
+                    _session._restoreMilliseconds +=
+                        (FrameCost.Now - began) * 1000.0 /
+                        System.Diagnostics.Stopwatch.Frequency;
+                }
             }
 
             public void ReplayFrame(long simulationFrame)
@@ -1287,6 +1317,7 @@ namespace LocalMultiplayerMod
 
         private int _rollbackCount;
         private long _resimulatedFrames;
+        private double _restoreMilliseconds;
         private double _resimulateMilliseconds;
         private int _predictedFrames;
         private int _realFrames;
@@ -1338,6 +1369,8 @@ namespace LocalMultiplayerMod
                 " rollbacks=" + _rollbackCount +
                 " resimulated=" + _resimulatedFrames +
                 " resim_ms=" + _resimulateMilliseconds.ToString("F1") +
+                " restore_ms=" + _restoreMilliseconds.ToString("F1") +
+                " write_fail=" + StateSnapshot.FailedWrites +
                 " snapshots=" + _snapshotCount +
                 " snapshot_ms=" + _snapshotMilliseconds.ToString("F1") +
                 " predicted=" + _predictedFrames +
@@ -1401,6 +1434,8 @@ namespace LocalMultiplayerMod
             _rollbackCount = 0;
             _resimulatedFrames = 0;
             _resimulateMilliseconds = 0;
+            _restoreMilliseconds = 0;
+            StateSnapshot.FailedWrites = 0;
             _snapshotCount = 0;
             _snapshotMilliseconds = 0;
         }
