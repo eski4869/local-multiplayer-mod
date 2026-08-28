@@ -274,6 +274,15 @@ time from `GimmickStateCompat`, without modifying the mod: the patterns, and the
 rules for adding one, are in
 [third-party compatibility](docs/third-party-compatibility.md).
 
+Which mods actually need this has a measurable answer rather than a guessed
+one. Maps declare their gimmick dependencies on the Workshop, and a mod's
+mutable static fields say whether it holds per-player state at all. Most hold
+none — including the most widely required gimmick mod in the ecosystem, which
+needs nothing from this mod at all. The method is in
+[surveying gimmick mods](docs/surveying-gimmick-mods.md), the current results
+in [gimmick map coverage](docs/gimmick-map-coverage.md), and the next thing to
+add in [gimmick coverage plan](docs/gimmick-coverage-plan.md).
+
 ### When something is wrong and the cause is not visible
 
 The mod ships with diagnostic probes, all switched off. Turn one on in the
