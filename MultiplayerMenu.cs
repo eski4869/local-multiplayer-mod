@@ -54,12 +54,12 @@ namespace LocalMultiplayerMod
 
             return new ModeEntrance(
                 menu,
-                () => ModEntry.PlayerCount > 1
+                () => ModEntry.IsLocalMultiplayerActive
                     ? "Exit local multiplayer"
                     : "Local multiplayer",
                 new IMenuItem[] { players, layout, start },
                 new IMenuItem[] { exit },
-                () => ModEntry.PlayerCount > 1,
+                () => ModEntry.IsLocalMultiplayerActive,
                 () => ModEntry.IsSessionLocked
             );
         }
@@ -94,7 +94,7 @@ namespace LocalMultiplayerMod
                 new IMenuItem[] { battle, network, delay, create, join },
                 new IMenuItem[] { invite, close },
                 () => ModEntry.IsSessionLocked,
-                () => ModEntry.PlayerCount > 1,
+                () => ModEntry.IsLocalMultiplayerActive,
                 // The delay line only exists as a question while the answer is not
                 // being worked out for you.
                 delay,
@@ -281,7 +281,7 @@ namespace LocalMultiplayerMod
                 x,
                 y,
                 _label(),
-                _isBlocked() ? Color.Gray : Color.White,
+                _isBlocked() && !_isRunning() ? Color.Gray : Color.White,
                 Game1.instance.contentManager.font.MenuFont
             );
         }
@@ -303,7 +303,14 @@ namespace LocalMultiplayerMod
                 return base.MyRun(p_data);
             }
 
-            if (_isBlocked())
+            // Never blocked out of the mode you are in. The two conditions are
+            // meant to be exclusive, and when they were not - netplay raises the
+            // player count, which the online entry was reading as "local
+            // multiplayer is running" - a running session had no way out of
+            // itself at all. The predicates are fixed; this makes the fix
+            // unnecessary rather than relying on it, because the way out is the
+            // one thing that must never be unreachable.
+            if (_isBlocked() && !_isRunning())
             {
                 return BTresult.Failure;
             }

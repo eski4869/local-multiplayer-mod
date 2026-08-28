@@ -120,6 +120,21 @@ namespace LocalMultiplayerMod
             get { return PlayerCount > 1; }
         }
 
+        /// <summary>
+        /// Two or more players on this machine because somebody asked for that,
+        /// rather than because a session put them there.
+        ///
+        /// <see cref="PlayerCount" /> cannot answer this on its own: netplay
+        /// raises it to two for the duration of a session, so "more than one
+        /// player" is true of an online session as well, and a menu using it to
+        /// mean "local multiplayer is running" locked itself the moment a lobby
+        /// opened.
+        /// </summary>
+        internal static bool IsLocalMultiplayerActive
+        {
+            get { return _netplayPlayerCount == 0 && PlayerCount > 1; }
+        }
+
 
         internal static TwoPlayerLayout TwoPlayerLayout
         {
