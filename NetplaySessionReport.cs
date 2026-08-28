@@ -34,6 +34,7 @@ namespace LocalMultiplayerMod
 
         private long _frames;
         private long _rollbacks;
+        private long _stalls;
         private long _resimulated;
         private bool _battle;
         private bool _running;
@@ -43,6 +44,7 @@ namespace LocalMultiplayerMod
             Array.Clear(_lag, 0, _lag.Length);
             _frames = 0;
             _rollbacks = 0;
+            _stalls = 0;
             _resimulated = 0;
             _battle = battle;
             _running = true;
@@ -63,6 +65,21 @@ namespace LocalMultiplayerMod
 
             _frames++;
             _lag[lag < 0 ? 0 : (lag >= Buckets ? Buckets - 1 : (int)lag)]++;
+        }
+
+        /// <summary>
+        /// The prediction window filled and the game was held still. The one
+        /// failure here a player actually feels, so it is counted separately from
+        /// everything that merely costs work.
+        /// </summary>
+        public void NoteStall()
+        {
+            if (!_running)
+            {
+                return;
+            }
+
+            _stalls++;
         }
 
         public void NoteRollback(long replayed)
@@ -105,25 +122,46 @@ namespace LocalMultiplayerMod
                 " seconds=" +
                     (_elapsed.ElapsedMilliseconds / 1000.0).ToString("F1") +
                 " frames=" + _frames +
+                " fps=" + (_elapsed.ElapsedMilliseconds <= 0
+                    ? "0.0"
+                    : (_frames * 1000.0 /
+                        _elapsed.ElapsedMilliseconds).ToString("F1")) +
+                " delay=" + RollbackPlan.InputDelayFrames +
+
+                // Guessed is how often the peer's input had not arrived yet.
+                // Wrong is how often that guess turned out to be wrong, as a share
+                // of the guesses - and it is the only one of the two that costs
+                // anything, because a correct guess is simply the answer.
+                //
+                // These were one number called miss_dN, described as the rollback
+                // rate a delay would leave. It is not: a first real session had
+                // fifty per cent of frames guessed and twelve rollbacks in nine
+                // thousand. Jump King holds an input through a whole charge and a
+                // whole fall, so "the same as last frame" is nearly always right.
+                " guessed=" + GuessRate(RollbackPlan.InputDelayFrames) +
+                " wrong=" + WrongShareOfGuesses() +
                 " rollbacks=" + _rollbacks +
                 " resimulated=" + _resimulated +
+
+                // The window filling is the one failure a player feels, so it is
+                // reported on its own rather than folded in with the rest.
+                " stalls=" + _stalls +
                 " lag_p50=" + Percentile(0.50) +
                 " lag_p95=" + Percentile(0.95) +
                 " lag_p99=" + Percentile(0.99) +
                 " lag_max=" + Percentile(1.0) +
 
-                // What each candidate input delay would have left as a rollback
-                // rate, read off the histogram rather than inferred from a ping.
-                // delay=2 is what this build ran, so miss_d2 should land near the
-                // rollback count above - and if it does not, one of the two is
-                // measuring something other than what it says.
-                " miss_d0=" + MissRate(0) +
-                " miss_d1=" + MissRate(1) +
-                " miss_d2=" + MissRate(2) +
-                " miss_d3=" + MissRate(3) +
-                " miss_d4=" + MissRate(4) +
-                " miss_d5=" + MissRate(5) +
-                " miss_d6=" + MissRate(6)
+                // What share of frames each candidate delay would still have had
+                // to guess across. Read off the histogram rather than inferred
+                // from a ping - and worth reading next to wrong= above, because
+                // guessing more is only worth avoiding if the guesses are bad.
+                " guess_d0=" + GuessRate(0) +
+                " guess_d1=" + GuessRate(1) +
+                " guess_d2=" + GuessRate(2) +
+                " guess_d3=" + GuessRate(3) +
+                " guess_d4=" + GuessRate(4) +
+                " guess_d5=" + GuessRate(5) +
+                " guess_d6=" + GuessRate(6)
             );
         }
 
@@ -149,23 +187,44 @@ namespace LocalMultiplayerMod
         }
 
         /// <summary>
-        /// The share of frames an input delay of <paramref name="delay" /> would
-        /// still have had to guess across, as a percentage.
+        /// How many of the guesses turned out wrong, as a percentage of the
+        /// guesses rather than of every frame. Nothing is spent on a guess that
+        /// was right.
         /// </summary>
-        private string MissRate(int delay)
+        private string WrongShareOfGuesses()
         {
-            if (_frames == 0)
+            long guessed = GuessedFrames(RollbackPlan.InputDelayFrames);
+            if (guessed <= 0)
             {
-                return "0.0";
+                return "0.00";
             }
 
+            return (100.0 * _rollbacks / guessed).ToString("F2");
+        }
+
+        private long GuessedFrames(int delay)
+        {
             long covered = 0;
             for (int i = 0; i <= delay && i < Buckets; i++)
             {
                 covered += _lag[i];
             }
 
-            return (100.0 * (_frames - covered) / _frames).ToString("F1");
+            return _frames - covered;
+        }
+
+        /// <summary>
+        /// The share of frames an input delay of <paramref name="delay" /> would
+        /// still have had to guess across, as a percentage.
+        /// </summary>
+        private string GuessRate(int delay)
+        {
+            if (_frames == 0)
+            {
+                return "0.0";
+            }
+
+            return (100.0 * GuessedFrames(delay) / _frames).ToString("F1");
         }
     }
 }

@@ -242,16 +242,6 @@ namespace LocalMultiplayerMod
             get { return _transport.IsLobbyOwner; }
         }
 
-        /// <summary>
-        /// Frames since the session began, or -1 when there is no agreed origin
-        /// to count from. Both machines hold this number exactly, which is what
-        /// makes it usable as a clock two simulations can share.
-        /// </summary>
-        public long SessionFrames
-        {
-            get { return _startFrame < 0 ? -1 : _frame - _startFrame; }
-        }
-
         /// <summary>Who is on the other end, or null.</summary>
         public string PeerName
         {
@@ -588,6 +578,7 @@ namespace LocalMultiplayerMod
             RollbackPlan.ResetInputDelayFrames();
             _helloSentAt = 0;
             _handshakeRoundTripMilliseconds = 0.0;
+            _worldAligned = false;
 
             string summary = _report.Finish();
             if (summary != null)
@@ -1680,6 +1671,58 @@ namespace LocalMultiplayerMod
         }
 
         /// <summary>
+        /// Puts this machine's world back to a known state, the same way the
+        /// pause menu's own Restart does.
+        ///
+        /// It reloads the save rather than sending anybody back down the
+        /// mountain - <c>m_restart_state</c> makes the title screen skip its menu
+        /// and run <c>ReloadSaveNode</c> - so a session costs both players the
+        /// screen for a moment and none of their climb.
+        /// </summary>
+        private void RestartLevel()
+        {
+            try
+            {
+                if (Game1.instance == null || Game1.instance.m_game == null)
+                {
+                    return;
+                }
+
+                Game1.instance.m_game.m_restart_state = true;
+
+                // PauseManager is internal to the game, so it is reached by name,
+                // the same way IsGamePaused above reaches it.
+                Type type =
+                    AccessTools.TypeByName("JumpKing.PauseMenu.PauseManager");
+                FieldInfo field = AccessTools.Field(type, "instance");
+                MethodInfo exit = AccessTools.Method(type, "OnExitToMenu");
+                if (field == null || exit == null)
+                {
+                    return;
+                }
+
+                object pause = field.GetValue(null);
+                if (pause != null)
+                {
+                    exit.Invoke(pause, null);
+                }
+            }
+            catch (Exception ex)
+            {
+                NetplayNotice.Show("could not restart to line the worlds up");
+                JumpKing.Program.crashLog.AddErrorMessage(
+                    "Local Multiplayer restart failed: " + ex.Message
+                );
+            }
+        }
+
+        /// <summary>
+        /// Whether this session has already put both worlds back to a known
+        /// state. Once per session, not once per origin.
+        /// </summary>
+        private bool _worldAligned;
+
+        /// <summary>
         /// Gives up the agreed origin and asks for another one.
         ///
         /// The measurement is closed out first. A restart divides one session
@@ -2034,6 +2077,28 @@ namespace LocalMultiplayerMod
                 _frame = -1;
                 _lastAppliedRemote = -1;
                 _rollback.Clear();
+
+                // Both machines restart the level before the first frame is
+                // agreed, because a shared world has to start from a state both
+                // sides hold and nothing else puts it there. Corrections repair
+                // the players; every other thing in the world - the entities no
+                // snapshot covers, and anything a gimmick mod keeps a clock for -
+                // is only ever right if both began from the same start.
+                //
+                // Doing it here rather than patching each source of drift as it
+                // is found is the point. There is no list of what is time-based
+                // in an arbitrary map's mods, and a restart does not need one.
+                //
+                // Once per session. The reload lands in OnLevelStarted, which
+                // sees a live session and asks for the origin again, so without
+                // the flag this would restart every time it agreed one.
+                if (!_worldAligned)
+                {
+                    _worldAligned = true;
+                    RestartLevel();
+                    return;
+                }
+
                 _clock.Start();
 
                 _report.Start(ModEntry.IsBattleMode);
@@ -2464,6 +2529,7 @@ namespace LocalMultiplayerMod
             }
 
             _predictionStalls++;
+            _report.NoteStall();
 
             _consecutiveStalls++;
 

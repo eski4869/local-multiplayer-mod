@@ -80,27 +80,54 @@ namespace LocalMultiplayerMod.Tests
         }
 
         [TestMethod]
-        public void AutoTurnsOneWayTravelIntoFrames()
+        public void TravelWorthNothingDoesNotRaiseTheDelay()
         {
             NetplaySettings.AutomaticDelay = true;
 
-            // 68ms round trip is 34ms one way, which is two frames at the 17ms
-            // this game really runs at - not the 16.67 it asks for.
-            Assert.AreEqual(2, NetplaySettings.Resolve(68.0));
+            // Auto used to add a frame of delay per frame of travel. That is the
+            // wrong trade here: travel decides how many frames are predicted, and
+            // a first real session measured prediction at 99.7% correct - fifty
+            // per cent of frames predicted, twelve wrong out of nine thousand.
+            // Buying that fraction with input delay on every frame, in a game
+            // where the length of a press is the mechanic, is a bad bargain.
+            //
+            // 68ms round trip is two frames one way at the 17ms this game really
+            // runs at. Nothing is added for it.
+            Assert.AreEqual(
+                RollbackPlan.DefaultInputDelayFrames,
+                NetplaySettings.Resolve(68.0)
+            );
 
-            // Rounded up, never to nearest: a delay one frame short of the travel
-            // leaves the rollback doing the work the delay was chosen to avoid.
-            Assert.AreEqual(3, NetplaySettings.Resolve(69.0));
+            Assert.AreEqual(
+                RollbackPlan.DefaultInputDelayFrames,
+                NetplaySettings.Resolve(0.5)
+            );
         }
 
         [TestMethod]
-        public void AutoNeverAnswersZeroAndNeverAnswersPastTheRange()
+        public void AutoClimbsOnlyForALinkFarEnoughToBeWorthIt()
         {
             NetplaySettings.AutomaticDelay = true;
 
-            // Zero is a legitimate thing to ask for and not a thing to arrive at:
-            // it means every frame is a guess, which should be chosen knowingly.
-            Assert.AreEqual(1, NetplaySettings.Resolve(0.5));
+            // 204ms round trip is six frames one way. Four of those are free, so
+            // two are added to the shipped default.
+            Assert.AreEqual(
+                RollbackPlan.DefaultInputDelayFrames + 2,
+                NetplaySettings.Resolve(204.0)
+            );
+        }
+
+        [TestMethod]
+        public void AutoNeverGoesBelowTheShippedDefaultOrPastTheRange()
+        {
+            NetplaySettings.AutomaticDelay = true;
+
+            // Never below what the mod ships with. A measurement is not a licence
+            // to change how the game feels; going lower is the owner's call.
+            Assert.IsTrue(
+                NetplaySettings.Resolve(1.0) >=
+                    RollbackPlan.DefaultInputDelayFrames
+            );
 
             Assert.AreEqual(
                 RollbackPlan.MaxInputDelayFrames,

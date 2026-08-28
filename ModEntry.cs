@@ -614,7 +614,6 @@ namespace LocalMultiplayerMod
             // loaded before [BeforeLevelLoad] runs: this one looks other mods up
             // by name.
             GimmickStateCompat.Install(harmony);
-            WindSync.Install(harmony);
             TeleportProbe.Install(harmony);
             JumpProbe.Install(harmony);
 

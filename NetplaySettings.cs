@@ -35,21 +35,44 @@ namespace LocalMultiplayerMod
         /// The handshake's own round trip, or a value at or below zero when
         /// nothing was measured.
         /// </param>
+        /// <summary>
+        /// How much one-way travel costs nothing worth paying for.
+        ///
+        /// Four frames is about seventy milliseconds, which covers a domestic
+        /// connection with room to spare. Below it Auto does not raise the delay
+        /// at all, because there is nothing there to buy - see the remarks on
+        /// <see cref="Resolve" />.
+        /// </summary>
+        private const int FreeTravelFrames = 4;
+
         /// <remarks>
         /// Auto cannot be settled when the lobby is created, because at that
         /// moment there is nobody on the other end to measure. It is settled when
         /// somebody joins, which is the first point a round trip exists.
         ///
-        /// One-way travel is what decides whether a frame has to be guessed: the
-        /// simulation needs the peer's input for a frame it is already
-        /// <c>delay</c> frames past, so a delay covering the travel removes the
-        /// guess and anything short of it does not. Half the round trip is that
-        /// travel, and it is rounded up rather than to nearest because a delay one
-        /// frame short still leaves the rollback doing the work.
+        /// **The delay is not here to cover the travel time**, which is what this
+        /// used to compute and it was the wrong objective. Travel decides how many
+        /// frames must be *predicted*, and prediction is very nearly free in this
+        /// game: a first real session put it at 99.7% correct over nine thousand
+        /// frames - fifty per cent of frames predicted, twelve of them wrong. Jump
+        /// King holds an input for long stretches, through a charge and through a
+        /// whole fall, so "the same as last frame" is almost always right.
         ///
-        /// The floor is one. Zero delay is a legitimate manual choice for someone
-        /// who wants every frame as early as possible and will take the
-        /// corrections, but it is not something to arrive at automatically.
+        /// Covering the travel would therefore buy a fraction of one per cent, and
+        /// pay for it with input delay on every single frame of a game where the
+        /// length of a press is the whole of the mechanic. On that session the old
+        /// rule would have chosen three to seven frames. That is the wrong trade.
+        ///
+        /// Nor does raising the delay avoid the stall, which is the failure that
+        /// is actually felt: <c>NetplaySession</c> stalls on the raw distance to
+        /// confirmed input, without subtracting the delay, so a larger delay does
+        /// not widen that margin.
+        ///
+        /// So Auto stays at the value the mod ships with and only climbs for a
+        /// link far enough away that mispredictions stop being rare. The floor is
+        /// deliberately the shipped default rather than something lower: a
+        /// measurement is not a licence to change how the game feels, and going
+        /// below it is the owner's call, not this function's.
         /// </remarks>
         public static int Resolve(double measuredRoundTripMilliseconds)
         {
@@ -66,13 +89,13 @@ namespace LocalMultiplayerMod
             double oneWayFrames =
                 measuredRoundTripMilliseconds / 2.0 / FrameMilliseconds;
 
-            int frames = (int)Math.Ceiling(oneWayFrames);
-            if (frames < 1)
+            int beyondFree = (int)Math.Ceiling(oneWayFrames) - FreeTravelFrames;
+            if (beyondFree < 0)
             {
-                frames = 1;
+                beyondFree = 0;
             }
 
-            return Clamp(frames);
+            return Clamp(RollbackPlan.DefaultInputDelayFrames + beyondFree);
         }
 
         private static int Clamp(int frames)

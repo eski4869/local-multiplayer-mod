@@ -37,15 +37,15 @@ namespace LocalMultiplayerMod.Tests
         }
 
         [TestMethod]
-        public void AMissRateIsTheShareOfFramesTheDelayWouldNotHaveCovered()
+        public void AGuessRateIsTheShareOfFramesTheDelayWouldNotHaveCovered()
         {
             // Five frames, lags 0 1 2 5. A delay of 1 covers the first two.
             string line = Summarise(0, 0, 1, 2, 5);
 
-            Assert.AreEqual("0.0", Token(line, "miss_d5"));
-            Assert.AreEqual("20.0", Token(line, "miss_d2"));
-            Assert.AreEqual("40.0", Token(line, "miss_d1"));
-            Assert.AreEqual("60.0", Token(line, "miss_d0"));
+            Assert.AreEqual("0.0", Token(line, "guess_d5"));
+            Assert.AreEqual("20.0", Token(line, "guess_d2"));
+            Assert.AreEqual("40.0", Token(line, "guess_d1"));
+            Assert.AreEqual("60.0", Token(line, "guess_d0"));
         }
 
         [TestMethod]
@@ -55,7 +55,7 @@ namespace LocalMultiplayerMod.Tests
             // within the delay, that delay removes rollback entirely.
             string line = Summarise(0, 1, 2, 3, 3, 2, 1);
 
-            Assert.AreEqual("0.0", Token(line, "miss_d3"));
+            Assert.AreEqual("0.0", Token(line, "guess_d3"));
             Assert.AreEqual("3", Token(line, "lag_max"));
         }
 
@@ -78,18 +78,18 @@ namespace LocalMultiplayerMod.Tests
             Assert.AreEqual("1", Token(line, "lag_p50"));
             Assert.AreEqual("1", Token(line, "lag_p95"));
             Assert.AreEqual("12", Token(line, "lag_max"));
-            Assert.AreEqual("1.0", Token(line, "miss_d1"));
+            Assert.AreEqual("1.0", Token(line, "guess_d1"));
         }
 
         [TestMethod]
-        public void LagBeyondTheRangeStillCountsAsAMiss()
+        public void LagBeyondTheRangeStillCountsAsAGuess()
         {
             // The last bucket is a catch-all. A lag past it must not silently
             // become a covered frame - that would make a bad connection read as a
             // good one, which is the one direction this must never fail in.
             string line = Summarise(0, 100000);
 
-            Assert.AreEqual("50.0", Token(line, "miss_d6"));
+            Assert.AreEqual("50.0", Token(line, "guess_d6"));
         }
 
         [TestMethod]
@@ -113,6 +113,30 @@ namespace LocalMultiplayerMod.Tests
             // A peer going silent calls Leave, and so does the player leaving after
             // it. The second must produce nothing.
             Assert.IsNull(report.Finish());
+        }
+
+        [TestMethod]
+        public void WrongIsAShareOfTheGuessesAndNotOfEveryFrame()
+        {
+            // The distinction the line exists to make. Four frames guessed at the
+            // shipped delay of two, one of them wrong: that is a quarter of the
+            // guesses, not a quarter of the session. Reporting it against every
+            // frame is what made a fifty per cent guess rate read as a fifty per
+            // cent rollback rate when the real figure was a tenth of a per cent.
+            var report = new NetplaySessionReport();
+            report.Start(false);
+
+            for (int i = 0; i < 4; i++)
+            {
+                report.NoteFrame(5);
+            }
+
+            report.NoteRollback(3);
+
+            string line = report.Finish();
+
+            Assert.AreEqual("100.0", Token(line, "guessed"));
+            Assert.AreEqual("25.00", Token(line, "wrong"));
         }
 
         [TestMethod]
