@@ -334,77 +334,18 @@ namespace LocalMultiplayerMod
             return true;
         }
 
-        // Online comes first, because it is the one line a player has to notice
-        // without already knowing it is there. The rest are settings they went
-        // looking for.
+        /// <summary>
+        /// One entry, not seven. See <see cref="NetplayMenu" /> for why the
+        /// settings belong inside the thing that consumes them.
+        /// </summary>
         [PauseMenuItemSetting]
         [MainMenuItemSetting]
-        public static LocalMultiplayerHostAction LocalMultiplayerHostMenu(
+        public static JumpKing.PauseMenu.BT.TextButton LocalMultiplayerOnlineMenu(
             object factory,
             JumpKing.PauseMenu.GuiFormat format
         )
         {
-            return new LocalMultiplayerHostAction();
-        }
-
-        [PauseMenuItemSetting]
-        [MainMenuItemSetting]
-        public static LocalMultiplayerInviteAction LocalMultiplayerInviteMenu(
-            object factory,
-            JumpKing.PauseMenu.GuiFormat format
-        )
-        {
-            return new LocalMultiplayerInviteAction();
-        }
-
-        [PauseMenuItemSetting]
-        [MainMenuItemSetting]
-        public static LocalMultiplayerJoinAction LocalMultiplayerJoinMenu(
-            object factory,
-            JumpKing.PauseMenu.GuiFormat format
-        )
-        {
-            return new LocalMultiplayerJoinAction();
-        }
-
-        [PauseMenuItemSetting]
-        [MainMenuItemSetting]
-        public static LocalMultiplayerLeaveAction LocalMultiplayerLeaveMenu(
-            object factory,
-            JumpKing.PauseMenu.GuiFormat format
-        )
-        {
-            return new LocalMultiplayerLeaveAction();
-        }
-
-        [PauseMenuItemSetting]
-        [MainMenuItemSetting]
-        public static LocalMultiplayerModeOption LocalMultiplayerMenu(
-            object factory,
-            JumpKing.PauseMenu.GuiFormat format
-        )
-        {
-            return new LocalMultiplayerModeOption();
-        }
-
-        [PauseMenuItemSetting]
-        [MainMenuItemSetting]
-        public static LocalMultiplayerSplitOption LocalMultiplayerSplitMenu(
-            object factory,
-            JumpKing.PauseMenu.GuiFormat format
-        )
-        {
-            return new LocalMultiplayerSplitOption();
-        }
-
-        [PauseMenuItemSetting]
-        [MainMenuItemSetting]
-        public static LocalMultiplayerBattleOption LocalMultiplayerBattleMenu(
-            object factory,
-            JumpKing.PauseMenu.GuiFormat format
-        )
-        {
-            return new LocalMultiplayerBattleOption();
+            return NetplayMenu.Create(format);
         }
 
         private static void EnsurePatched()
