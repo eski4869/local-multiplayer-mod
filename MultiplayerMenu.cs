@@ -151,7 +151,7 @@ namespace LocalMultiplayerMod
         /// once and its lines appear as results arrive, rather than the menu being
         /// rebuilt under somebody while they are reading it.
         /// </summary>
-        private const int LobbySlots = 8;
+        private const int LobbySlots = 10;
 
         public static bool IsRunning(ModeKind kind)
         {
@@ -170,7 +170,7 @@ namespace LocalMultiplayerMod
                 || (mine != ModeKind.Online && IsRunning(ModeKind.Online));
         }
 
-        public static ModeEntrance CreateLocal(GuiFormat format)
+        public static Slot CreateLocal(GuiFormat format)
         {
             LocalMultiplayerModeOption players = new LocalMultiplayerModeOption();
             LocalMultiplayerSplitOption layout = new LocalMultiplayerSplitOption();
@@ -201,7 +201,7 @@ namespace LocalMultiplayerMod
             start.Closes(page);
             exit.Closes(page);
 
-            return new ModeEntrance(
+            ModeEntrance entrance = new ModeEntrance(
                 ModeKind.Local,
                 page,
                 delegate
@@ -211,9 +211,20 @@ namespace LocalMultiplayerMod
                         : "Local multiplayer";
                 }
             );
+
+            // While a session is up this slot is the invitation instead. Local
+            // multiplayer is not merely unavailable then, it is beside the point:
+            // a line nobody can press is still a line to read past.
+            return new Slot(
+                MenuLine.Shown(
+                    new MenuAction("Invite a friend", Invite),
+                    delegate { return IsRunning(ModeKind.Online); }
+                ),
+                MenuLine.Always(entrance)
+            );
         }
 
-        public static ModeEntrance CreateOnline(GuiFormat format)
+        public static Slot CreateOnline(GuiFormat format)
         {
             Func<bool> idle = delegate { return !IsRunning(ModeKind.Online); };
             Func<bool> running = delegate { return IsRunning(ModeKind.Online); };
@@ -233,7 +244,7 @@ namespace LocalMultiplayerMod
 
             // Whose lobby to join.
             LobbySlot[] slots = new LobbySlot[LobbySlots];
-            MenuLine[] lines = new MenuLine[LobbySlots + 1];
+            MenuLine[] lines = new MenuLine[LobbySlots + 2];
             lines[0] = MenuLine.Shown(
                 new MenuText("searching..."),
                 delegate { return ModEntry.Netplay.Found.Count == 0; }
@@ -249,36 +260,51 @@ namespace LocalMultiplayerMod
                 );
             }
 
+            // Said rather than silently dropped. Ten is not a ranking - Steam
+            // returns them in its own order and there is nothing here to rank them
+            // by - so a list that quietly stopped at ten would be hiding lobbies
+            // without admitting which.
+            lines[LobbySlots + 1] = MenuLine.Shown(
+                new MenuText("...and more"),
+                delegate { return ModEntry.Netplay.Found.Count > LobbySlots; }
+            );
+
             Page browse = new Page(format, lines);
             for (int i = 0; i < LobbySlots; i++)
             {
                 slots[i].Closes(browse);
             }
 
-            MenuAction invite = new MenuAction("Invite a friend", Invite);
-            MenuAction close = new MenuAction(CloseLabel, CloseSession);
-
+            // Only the two ways in. Once a session exists this page is not
+            // reachable at all - the slot below shows the way out in its place -
+            // so it has no state to describe but the one before anything started.
             Page page = new Page(
                 format,
-                MenuLine.Opening("Create lobby", setup, idle),
-                MenuLine.Opening("Join", browse, idle),
-                MenuLine.Shown(invite, running),
-                MenuLine.Shown(close, running)
+                MenuLine.Opening("Create lobby", setup, null),
+                MenuLine.Opening("Join", browse, null)
             );
 
             // Creating answers the question the whole branch was asking, so it
             // leaves the description of a thing that now exists rather than
             // sitting inside it.
             create.Closes(setup, page);
-            close.Closes(page);
 
-            return new ModeEntrance(
+            ModeEntrance entrance = new ModeEntrance(
                 ModeKind.Online,
                 page,
-                delegate
-                {
-                    return IsRunning(ModeKind.Online) ? CloseLabel() : "Online";
-                }
+                delegate { return "Online"; }
+            );
+
+            // A door labelled Destroy lobby with an invitation inside it was the
+            // wrong shape. During a session there is nothing to fold: the two
+            // things left to do are invite and end it, and they are the whole of
+            // the menu rather than the contents of something else.
+            return new Slot(
+                MenuLine.Shown(
+                    new MenuAction(CloseLabel, CloseSession),
+                    running
+                ),
+                MenuLine.Always(entrance)
             );
         }
 
@@ -321,6 +347,65 @@ namespace LocalMultiplayerMod
         {
             ModEntry.Netplay.Leave();
             return true;
+        }
+    }
+
+    /// <summary>
+    /// One place in the mod's options list, showing whichever of its alternatives
+    /// applies now.
+    ///
+    /// The game's own list has no idea about any of this and cannot be asked to
+    /// hide a line, so a slot that must disappear instead becomes something else.
+    /// It is the same condition-per-line idea as <see cref="Page" />, one level
+    /// up, and it is what lets a session replace both entries outright rather than
+    /// greying one and burying the other.
+    /// </summary>
+    public sealed class Slot : IBTSimpleMenuItem
+    {
+        private readonly MenuLine[] _alternatives;
+
+        internal Slot(params MenuLine[] alternatives)
+        {
+            _alternatives = alternatives;
+        }
+
+        /// <summary>The first whose condition holds. The last should have none.</summary>
+        private IBTSimpleMenuItem Active
+        {
+            get
+            {
+                for (int i = 0; i < _alternatives.Length; i++)
+                {
+                    MenuLine line = _alternatives[i];
+                    if (line.When == null || line.When())
+                    {
+                        return line.Item;
+                    }
+                }
+
+                return null;
+            }
+        }
+
+        public override void Draw(int x, int y, bool selected)
+        {
+            IBTSimpleMenuItem active = Active;
+            if (active != null)
+            {
+                active.Draw(x, y, selected);
+            }
+        }
+
+        public override Point GetSize()
+        {
+            IBTSimpleMenuItem active = Active;
+            return active == null ? Point.Zero : active.GetSize();
+        }
+
+        protected override BTresult MyRun(TickData p_data)
+        {
+            IBTSimpleMenuItem active = Active;
+            return active == null ? BTresult.Failure : active.Run(p_data);
         }
     }
 

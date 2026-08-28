@@ -1851,6 +1851,8 @@ namespace LocalMultiplayerMod
             }
 
             _checksums.Remove(frame);
+            _report.NoteChecksum(mine == theirs);
+
             if (mine == theirs)
             {
                 _reportedDesync = false;

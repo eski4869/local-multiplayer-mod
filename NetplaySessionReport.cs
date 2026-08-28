@@ -35,6 +35,8 @@ namespace LocalMultiplayerMod
         private long _frames;
         private long _rollbacks;
         private long _stalls;
+        private long _compared;
+        private long _drifted;
         private long _resimulated;
         private bool _battle;
         private bool _running;
@@ -45,6 +47,8 @@ namespace LocalMultiplayerMod
             _frames = 0;
             _rollbacks = 0;
             _stalls = 0;
+            _compared = 0;
+            _drifted = 0;
             _resimulated = 0;
             _battle = battle;
             _running = true;
@@ -80,6 +84,28 @@ namespace LocalMultiplayerMod
             }
 
             _stalls++;
+        }
+
+        /// <summary>
+        /// The two machines compared where both kings were standing.
+        ///
+        /// This is the only thing here that can say whether the worlds stayed the
+        /// same, and it is the question everything about aligning them exists to
+        /// answer. It was reported on screen once per episode and nowhere else,
+        /// which meant the answer depended on somebody noticing a line of text.
+        /// </summary>
+        public void NoteChecksum(bool matched)
+        {
+            if (!_running)
+            {
+                return;
+            }
+
+            _compared++;
+            if (!matched)
+            {
+                _drifted++;
+            }
         }
 
         public void NoteRollback(long replayed)
@@ -146,6 +172,12 @@ namespace LocalMultiplayerMod
                 // The window filling is the one failure a player feels, so it is
                 // reported on its own rather than folded in with the rest.
                 " stalls=" + _stalls +
+
+                // Whether the two worlds still agree, which is what every
+                // alignment mechanism in here is for. compared counts the
+                // comparisons, drifted counts the ones that disagreed.
+                " compared=" + _compared +
+                " drifted=" + _drifted +
                 " lag_p50=" + Percentile(0.50) +
                 " lag_p95=" + Percentile(0.95) +
                 " lag_p99=" + Percentile(0.99) +

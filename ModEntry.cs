@@ -356,7 +356,7 @@ namespace LocalMultiplayerMod
         /// </summary>
         [PauseMenuItemSetting]
         [MainMenuItemSetting]
-        public static ModeEntrance LocalMultiplayerLocalMenu(
+        public static Slot LocalMultiplayerLocalMenu(
             object factory,
             JumpKing.PauseMenu.GuiFormat format
         )
@@ -366,7 +366,7 @@ namespace LocalMultiplayerMod
 
         [PauseMenuItemSetting]
         [MainMenuItemSetting]
-        public static ModeEntrance LocalMultiplayerOnlineMenu(
+        public static Slot LocalMultiplayerOnlineMenu(
             object factory,
             JumpKing.PauseMenu.GuiFormat format
         )
