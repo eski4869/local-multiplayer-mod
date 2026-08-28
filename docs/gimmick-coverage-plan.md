@@ -20,7 +20,7 @@ crawl and its caveats.
 | --- | --- | --- |
 | JumpKingPlus blocks | 15 | **Needs nothing** — see below |
 | Forced Slope Blocks | 6 | **Needs nothing** — no mutable static state at all |
-| Movement Control Blocks | 4 | **Needs work** — three static holders |
+| Movement Control Blocks | 4 | **Added** — `DataMomentumStop.Screen` |
 | Trap Sand Blocks | 3 | **Probably needs nothing** — verify first |
 | Switch Blocks | 2 | Already covered (8 types) |
 | Expansion Blocks | 7 | Already covered |
@@ -58,7 +58,7 @@ rather than state that varies.
 > speculatively, because scoping level-load bookkeeping per player would
 > break level loading rather than fix anything.
 
-## The one that needs work: Movement Control Blocks
+## The one that needed work: Movement Control Blocks — now added
 
 Three mutable statics, each a single instance standing in for "the player":
 
@@ -68,16 +68,27 @@ Three mutable statics, each a single instance standing in for "the player":
 | `MovementControl.Patches.PatchJumpState` | `BehaviourForcedNeutral` | `BehaviourForcedNeutral` |
 | `MovementControl.Patches.PatchPadInstance` | `BehaviourInvertInput` | `BehaviourInvertInput` |
 
-`DataMomentumStop` holds exactly one writable property: `Screen` (`Int32`).
+`DataMomentumStop` holds exactly one writable property: `Screen` (`Int32`),
+an instance property on the single object `ModEntry.Data` points at.
 
-**This is the classic shape.** `Screen` means "the screen the momentum-stop
-rule applies on", and with two players on different screens, whoever writes it
-last decides for both — the order-dependence signature described in
-`docs/gimmick-diagnosis.md` (workspace repo).
+**This is the classic shape**, though not for the reason first written here.
+`Screen` was described above as "the screen the momentum-stop rule applies
+on", which reads like configuration. Decompiling
+`BehaviourMomentumStopScreen.ExecuteBlockBehaviour` shows it is a *latch*:
+the behaviour writes `Camera.CurrentScreen` on the frame it stops a player
+who is on the block, and writes `-1` on every frame that player is not on it.
+That pair is what makes the stop fire once per screen entry rather than every
+frame.
 
-### What to implement
+The two-player failure follows from the `-1` write, not from disagreement
+about a shared setting: the player standing *off* the block clears the other
+player's latch every frame, so the other player is stopped again and again
+instead of once. Same order-dependence signature described in
+`docs/gimmick-diagnosis.md` (workspace repo), reached by a different route.
 
-Add to `GimmickStateCompat.Targets`, following the existing entries exactly:
+### What was implemented
+
+Added to `GimmickStateCompat.Targets`:
 
 ```csharp
 new ScopedType
@@ -99,6 +110,23 @@ Behaviour instances are already handled — `BehaviourCloner` gives each player
 its own copy of registered block behaviours — so they need no entry here.
 Adding one would scope the wrong thing.
 
+Worth knowing, since neither was visible from field names alone:
+
+- **Cloning the behaviour does not separate the data.** `OnLevelStart`
+  registers `BehaviourMomentumStopScreen(Data)` on the first `PlayerEntity`
+  it finds, and the clone player 2 receives carries the *same* `Data`
+  reference. Scoping the property is what separates them; cloning alone
+  would not have.
+- **`BlockMomentumStopScreenSolid.canBlockPlayer` also reads
+  `ModEntry.Data.Screen`**, during collision resolution rather than in the
+  block pass. That read is still inside the per-entity update scope, so the
+  one entry covers the solid variant too.
+- **`DataMomentumStop.SaveToFile` runs at `OnLevelEnd`, outside any scope**,
+  so `zebrasSaves/momentumStopBlock.sav` keeps the unscoped value rather than
+  either player's. The persisted value is only the latch, so the worst case
+  is one extra momentum stop after a reload. Not worth scoping the save path
+  for.
+
 ### How to verify it worked
 
 1. Build and deploy per `docs/development-workflow.md` (workspace repo).
@@ -107,9 +135,13 @@ Adding one would scope the wrong thing.
    targets` should go from 31 to 32 with no new `unavailable targets` entry.
    A `type not found` for `MovementControl.Data.DataMomentumStop` means the
    mod is not subscribed on this machine, not that the entry is wrong.
-3. On a map requiring Movement Control Blocks, put the two players on
-   different screens across a momentum-stop block. Before the change, both
-   players share whichever screen was written last; after, each keeps its own.
+3. On a map requiring Movement Control Blocks (Babe of Nayuta enjoy edition,
+   Boots Babe Ring 3rd, Mortal Babe or Project Onyx), send one player onto a
+   momentum-stop-screen block while the other stands anywhere off it. Before
+   the change the off-block player rewrites the latch to `-1` every frame, so
+   the player on the block is stopped repeatedly and cannot build momentum on
+   that screen at all; after, each player keeps their own latch and the stop
+   fires once per screen entry as in single player.
 
 ## Scope boundary
 

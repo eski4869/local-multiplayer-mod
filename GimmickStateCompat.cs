@@ -134,6 +134,34 @@ namespace LocalMultiplayerMod
                 TypeName = "UpsideDownCore.Controller",
                 PlayerOwned = new[] { "isReverseGravity", "upsideDownType" },
                 PlayerOwnedCombined = new string[0]
+            },
+
+            // Movement Control Blocks keeps one DataMomentumStop for the whole
+            // game: OnLevelStart registers BehaviourMomentumStopScreen(Data) on
+            // the first player it finds, and BehaviourCloner hands player 2 a
+            // copy of that behaviour - a copy carrying the same Data reference,
+            // so one box holds both players' values.
+            //
+            // Screen is a latch rather than configuration, despite the name. The
+            // behaviour writes Camera.CurrentScreen when the player is stopped on
+            // the block and writes -1 on every frame the player is not on it,
+            // which is what makes the stop happen once per screen entry. With two
+            // players the one standing off the block clears the other's latch
+            // every frame, so the stop repeats instead. PlayerOwned, not
+            // PlayerOwnedCombined: there is no sensible way to fold two players'
+            // screen numbers into one answer.
+            //
+            // Both readers already sit inside a scope - the behaviour runs in the
+            // player's own block pass, and BlockMomentumStopScreenSolid's
+            // canBlockPlayer reads ModEntry.Data.Screen during collision
+            // resolution, which the per-entity update scope covers. SaveToFile at
+            // level end does not, so the file keeps the unscoped value; a stale
+            // latch there costs one extra stop after a reload.
+            new ScopedType
+            {
+                TypeName = "MovementControl.Data.DataMomentumStop",
+                PlayerOwned = new[] { "Screen" },
+                PlayerOwnedCombined = new string[0]
             }
         };
 

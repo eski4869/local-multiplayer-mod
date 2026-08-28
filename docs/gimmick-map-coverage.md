@@ -21,7 +21,7 @@ A mod can be required by every map and still need nothing from us.
 | JumpKingPlus blocks | **15** | No — level config and a sound handle only | n/a |
 | Expansion Blocks | 7 | Yes | ✅ `JumpKing_Expansion_Blocks.ModEntry` |
 | Forced Slope Blocks | 6 | No — zero mutable statics | n/a |
-| Movement Control Blocks | 4 | **Yes — `DataMomentumStop.Screen`** | ❌ **not yet** |
+| Movement Control Blocks | 4 | **Yes — `DataMomentumStop.Screen`** | ✅ `MovementControl.Data.DataMomentumStop` |
 | Trap Sand Blocks | 3 | Probably not — level-load bookkeeping | verify first |
 | Disable Screen Events | 3 | not inspected | — |
 | Less Game SFX | 3 | No — audio | n/a |
@@ -75,13 +75,14 @@ Transcension, Hamster Cage.
 
 ## What this says about priorities
 
-**Three of twenty maps require Movement Control Blocks, and it is the only
-uncovered mod confirmed to hold per-player state.** Those three — Babe of
-Nayuta enjoy edition, Boots Babe Ring 3rd, Mortal Babe, plus Project Onyx —
-are where two-player sessions would show the order-dependence symptom today.
+**Four of twenty maps require Movement Control Blocks, and it was the only
+uncovered mod confirmed to hold per-player state.** Those four — Babe of
+Nayuta enjoy edition, Boots Babe Ring 3rd, Mortal Babe and Project Onyx — are
+where two-player sessions showed the order-dependence symptom. Scoping
+`DataMomentumStop.Screen` closes that; the in-game check is still outstanding.
 
 Everything else in the top of the list needs nothing, which is the useful
-result: the coverage gap is narrow, not wide.
+result: the coverage gap was narrow, not wide.
 
 ## Re-running this
 
