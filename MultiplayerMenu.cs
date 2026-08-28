@@ -10,95 +10,275 @@ using Microsoft.Xna.Framework;
 namespace LocalMultiplayerMod
 {
     /// <summary>
+    /// Which mode a machine can be in. Two, and only one at a time.
+    ///
+    /// The kind exists so that "is anything else running" can be worked out
+    /// rather than written down per entry. Written down, it was wrong: the online
+    /// entry asked whether the player count was above one, which netplay itself
+    /// makes true, so a session greyed out the only way to end it.
+    /// </summary>
+    internal enum ModeKind
+    {
+        Local,
+        Online
+    }
+
+    /// <summary>
+    /// One line on a page: the item, and when it is there.
+    ///
+    /// Every line that comes and goes goes through this - the settings before a
+    /// mode starts, the actions that only exist after, the delay that only exists
+    /// under Manual, a lobby that has only just been found. There was a separate
+    /// mechanism for each of those, and each arrived as another argument on
+    /// something that already had too many.
+    /// </summary>
+    internal sealed class MenuLine
+    {
+        public readonly IBTSimpleMenuItem Item;
+        public readonly Func<bool> When;
+
+        /// <summary>The page this line opens, so refreshing reaches it too.</summary>
+        public readonly Page Opens;
+
+        private MenuLine(IBTSimpleMenuItem item, Func<bool> when, Page opens)
+        {
+            Item = item;
+            When = when;
+            Opens = opens;
+        }
+
+        public static MenuLine Always(IBTSimpleMenuItem item)
+        {
+            return new MenuLine(item, null, null);
+        }
+
+        public static MenuLine Shown(IBTSimpleMenuItem item, Func<bool> when)
+        {
+            return new MenuLine(item, when, null);
+        }
+
+        /// <summary>
+        /// A line that opens a page of its own. Nesting is safe built this way and
+        /// only this way: <c>MenuFactory</c> registers a submenu for drawing by
+        /// walking the tree it is handed at construction, so a page in place from
+        /// the start is drawn and one substituted later is not.
+        /// </summary>
+        public static MenuLine Opening(string label, Page page, Func<bool> when)
+        {
+            return new MenuLine(new TextButton(label, page.Selector), when, page);
+        }
+    }
+
+    /// <summary>
+    /// A menu whose lines answer for themselves whether they are there.
+    ///
+    /// Refreshed every tick rather than only on the way in. A lobby list fills as
+    /// replies arrive, and a session can start while its own menu is open, so a
+    /// page that decided once would be describing a moment that has passed.
+    /// </summary>
+    internal sealed class Page
+    {
+        private readonly MenuSelector _selector;
+        private readonly MenuLine[] _lines;
+
+        public Page(GuiFormat format, params MenuLine[] lines)
+        {
+            _selector = new MenuSelector(format);
+            _lines = lines;
+
+            for (int i = 0; i < lines.Length; i++)
+            {
+                _selector.AddChild(lines[i].Item);
+            }
+
+            _selector.Initialize();
+            Refresh();
+        }
+
+        public MenuSelector Selector
+        {
+            get { return _selector; }
+        }
+
+        public void Refresh()
+        {
+            for (int i = 0; i < _lines.Length; i++)
+            {
+                MenuLine line = _lines[i];
+
+                if (line.When == null || line.When())
+                {
+                    _selector.EnableMenuItem(line.Item);
+                }
+                else
+                {
+                    _selector.DisableMenuItem(line.Item);
+                }
+
+                if (line.Opens != null)
+                {
+                    line.Opens.Refresh();
+                }
+            }
+        }
+
+        public void Close()
+        {
+            _selector.SetResult(BTresult.Success);
+        }
+    }
+
+    /// <summary>
     /// One door per mode, and the door is also the way out.
     ///
-    /// The settings that decide a session sit inside the thing that consumes
-    /// them and do nothing until it is pressed. That press is the confirmation,
-    /// and it is the moment <see cref="ModEntry.IsSessionLocked" /> has always
-    /// described. Local settings stay in the local menu - online fixes the player
-    /// count at two and does not touch the view, so putting them under Online
-    /// would hide split screen behind a word that has nothing to do with it.
+    /// A setting sits inside the thing that consumes it and does nothing until
+    /// that thing is pressed, so the press is the confirmation. Local settings
+    /// stay in the local menu, because online fixes the player count at two and
+    /// never touches the view - filing split screen under "Online" would hide it
+    /// behind a word with nothing to do with it.
     ///
-    /// Once a mode is running, its own entry becomes the way out of it and the
-    /// other entry greys out. The two ways out of a lobby are not the same act
-    /// and are not named the same: a guest leaves, and the host destroys the
-    /// thing everyone else is in.
+    /// What a lobby will be is decided one level in, behind Create lobby, because
+    /// those settings are not alternatives to creating a lobby: they are the
+    /// description of the one about to be created. Beside it they read as a list
+    /// of unrelated things to press. Joining is a level in for the same reason -
+    /// choosing among somebody's lobbies is its own question, and it used to be
+    /// asked by cycling a single line sideways.
     /// </summary>
     internal static class MultiplayerMenu
     {
+        /// <summary>
+        /// How many found lobbies the list can show. Fixed, so the page is built
+        /// once and its lines appear as results arrive, rather than the menu being
+        /// rebuilt under somebody while they are reading it.
+        /// </summary>
+        private const int LobbySlots = 8;
+
+        public static bool IsRunning(ModeKind kind)
+        {
+            return kind == ModeKind.Local
+                ? ModEntry.IsLocalMultiplayerActive
+                : ModEntry.IsSessionLocked;
+        }
+
+        /// <summary>
+        /// Derived, never handed in. A mode cannot block itself out of its own
+        /// session this way, whatever anybody writes at the call site.
+        /// </summary>
+        public static bool AnyOtherRunning(ModeKind mine)
+        {
+            return (mine != ModeKind.Local && IsRunning(ModeKind.Local))
+                || (mine != ModeKind.Online && IsRunning(ModeKind.Online));
+        }
+
         public static ModeEntrance CreateLocal(GuiFormat format)
         {
             LocalMultiplayerModeOption players = new LocalMultiplayerModeOption();
             LocalMultiplayerSplitOption layout = new LocalMultiplayerSplitOption();
 
-            MenuSelector menu = new MenuSelector(format);
+            Func<bool> idle = delegate { return !IsRunning(ModeKind.Local); };
+            Func<bool> running = delegate { return IsRunning(ModeKind.Local); };
+
             MenuAction start = new MenuAction(
                 "Start",
-                menu,
-                () => ModEntry.SetPlayerMode(
-                    players.SelectedPlayerCount,
-                    layout.SelectedLayout
-                )
+                delegate
+                {
+                    return ModEntry.SetPlayerMode(
+                        players.SelectedPlayerCount,
+                        layout.SelectedLayout
+                    );
+                }
             );
-            MenuAction exit = new MenuAction(
-                "Exit local multiplayer",
-                menu,
-                EndLocal
+            MenuAction exit = new MenuAction("Exit local multiplayer", EndLocal);
+
+            Page page = new Page(
+                format,
+                MenuLine.Shown(players, idle),
+                MenuLine.Shown(layout, idle),
+                MenuLine.Shown(start, idle),
+                MenuLine.Shown(exit, running)
             );
 
-            menu.AddChild(players);
-            menu.AddChild(layout);
-            menu.AddChild(start);
-            menu.AddChild(exit);
-            menu.Initialize();
+            start.Closes(page);
+            exit.Closes(page);
 
             return new ModeEntrance(
-                menu,
-                () => ModEntry.IsLocalMultiplayerActive
-                    ? "Exit local multiplayer"
-                    : "Local multiplayer",
-                new IMenuItem[] { players, layout, start },
-                new IMenuItem[] { exit },
-                () => ModEntry.IsLocalMultiplayerActive,
-                () => ModEntry.IsSessionLocked
+                ModeKind.Local,
+                page,
+                delegate
+                {
+                    return IsRunning(ModeKind.Local)
+                        ? "Exit local multiplayer"
+                        : "Local multiplayer";
+                }
             );
         }
 
         public static ModeEntrance CreateOnline(GuiFormat format)
         {
-            LocalMultiplayerBattleOption battle = new LocalMultiplayerBattleOption();
-            NetworkModeOption network = new NetworkModeOption();
-            InputDelayOption delay = new InputDelayOption();
-            LocalMultiplayerJoinAction join = new LocalMultiplayerJoinAction();
+            Func<bool> idle = delegate { return !IsRunning(ModeKind.Online); };
+            Func<bool> running = delegate { return IsRunning(ModeKind.Online); };
 
-            MenuSelector menu = new MenuSelector(format);
-            MenuAction create = new MenuAction("Create lobby", menu, CreateLobby);
+            // What the lobby will be.
+            MenuAction create = new MenuAction("Create", CreateLobby);
+            Page setup = new Page(
+                format,
+                MenuLine.Always(new LocalMultiplayerBattleOption()),
+                MenuLine.Always(new NetworkModeOption()),
+                MenuLine.Shown(
+                    new InputDelayOption(),
+                    delegate { return !NetplaySettings.AutomaticDelay; }
+                ),
+                MenuLine.Always(create)
+            );
 
-            // Inviting only means anything once a lobby exists, which is exactly
-            // when the running half of this menu is the half on show.
-            MenuAction invite = new MenuAction("Invite a friend", menu, Invite);
-            MenuAction close = new MenuAction(CloseLabel, menu, CloseSession);
+            // Whose lobby to join.
+            LobbySlot[] slots = new LobbySlot[LobbySlots];
+            MenuLine[] lines = new MenuLine[LobbySlots + 1];
+            lines[0] = MenuLine.Shown(
+                new MenuText("searching..."),
+                delegate { return ModEntry.Netplay.Found.Count == 0; }
+            );
 
-            menu.AddChild(battle);
-            menu.AddChild(network);
-            menu.AddChild(delay);
-            menu.AddChild(create);
-            menu.AddChild(join);
-            menu.AddChild(invite);
-            menu.AddChild(close);
-            menu.Initialize();
+            for (int i = 0; i < LobbySlots; i++)
+            {
+                int slot = i;
+                slots[slot] = new LobbySlot(slot);
+                lines[slot + 1] = MenuLine.Shown(
+                    slots[slot],
+                    delegate { return slot < ModEntry.Netplay.Found.Count; }
+                );
+            }
+
+            Page browse = new Page(format, lines);
+            for (int i = 0; i < LobbySlots; i++)
+            {
+                slots[i].Closes(browse);
+            }
+
+            MenuAction invite = new MenuAction("Invite a friend", Invite);
+            MenuAction close = new MenuAction(CloseLabel, CloseSession);
+
+            Page page = new Page(
+                format,
+                MenuLine.Opening("Create lobby", setup, idle),
+                MenuLine.Opening("Join", browse, idle),
+                MenuLine.Shown(invite, running),
+                MenuLine.Shown(close, running)
+            );
+
+            // Creating answers the question the whole branch was asking, so it
+            // leaves the description of a thing that now exists rather than
+            // sitting inside it.
+            create.Closes(setup, page);
+            close.Closes(page);
 
             return new ModeEntrance(
-                menu,
-                () => ModEntry.IsSessionLocked ? CloseLabel() : "Online",
-                new IMenuItem[] { battle, network, delay, create, join },
-                new IMenuItem[] { invite, close },
-                () => ModEntry.IsSessionLocked,
-                () => ModEntry.IsLocalMultiplayerActive,
-                // The delay line only exists as a question while the answer is not
-                // being worked out for you.
-                delay,
-                () => !NetplaySettings.AutomaticDelay
+                ModeKind.Online,
+                page,
+                delegate
+                {
+                    return IsRunning(ModeKind.Online) ? CloseLabel() : "Online";
+                }
             );
         }
 
@@ -145,12 +325,202 @@ namespace LocalMultiplayerMod
     }
 
     /// <summary>
+    /// A top-level entry: what it is called, what it opens, and whether it can be
+    /// used at all. Everything conditional about the page itself belongs to the
+    /// page.
+    /// </summary>
+    public sealed class ModeEntrance : TextButton
+    {
+        private readonly ModeKind _kind;
+        private readonly Page _page;
+        private readonly Func<string> _label;
+
+        internal ModeEntrance(ModeKind kind, Page page, Func<string> label)
+            : base("", page.Selector)
+        {
+            _kind = kind;
+            _page = page;
+            _label = label;
+        }
+
+        private bool Blocked
+        {
+            get { return MultiplayerMenu.AnyOtherRunning(_kind); }
+        }
+
+        public override void Draw(int x, int y, bool selected)
+        {
+            MenuItemHelper.Draw(
+                x,
+                y,
+                _label(),
+                Blocked ? Color.Gray : Color.White,
+                Game1.instance.contentManager.font.MenuFont
+            );
+        }
+
+        public override Point GetSize()
+        {
+            return MenuItemHelper.GetSize(_label());
+        }
+
+        protected override BTresult MyRun(TickData p_data)
+        {
+            _page.Refresh();
+
+            if (last_result != BTresult.Running && Blocked)
+            {
+                return BTresult.Failure;
+            }
+
+            return base.MyRun(p_data);
+        }
+    }
+
+    /// <summary>
+    /// A line that does one thing, and closes the pages that thing has answered.
+    /// </summary>
+    internal class MenuAction : IBTSimpleMenuItem
+    {
+        private readonly Func<string> _label;
+        private readonly Func<bool> _act;
+        private Page[] _closes = new Page[0];
+
+        public MenuAction(string label, Func<bool> act)
+            : this(delegate { return label; }, act)
+        {
+        }
+
+        /// <param name="act">
+        /// Returns whether the action took. False leaves every page open, which is
+        /// what a repeatable action needs, and what a refused one needs so the
+        /// player can see it did not happen.
+        /// </param>
+        public MenuAction(Func<string> label, Func<bool> act)
+        {
+            _label = label;
+            _act = act;
+        }
+
+        public void Closes(params Page[] pages)
+        {
+            _closes = pages;
+        }
+
+        protected virtual string Label
+        {
+            get { return _label(); }
+        }
+
+        protected virtual bool Act()
+        {
+            return _act();
+        }
+
+        public override void Draw(int x, int y, bool selected)
+        {
+            MenuItemHelper.Draw(
+                x,
+                y,
+                Label,
+                Color.White,
+                Game1.instance.contentManager.font.MenuFont
+            );
+        }
+
+        public override Point GetSize()
+        {
+            return MenuItemHelper.GetSize(Label);
+        }
+
+        protected override BTresult MyRun(TickData p_data)
+        {
+            if (!ControllerManager.instance.MenuController.GetPadState().confirm)
+            {
+                return BTresult.Failure;
+            }
+
+            ControllerManager.instance.MenuController.ConsumePadPresses();
+
+            if (Act())
+            {
+                for (int i = 0; i < _closes.Length; i++)
+                {
+                    _closes[i].Close();
+                }
+            }
+
+            return BTresult.Success;
+        }
+    }
+
+    /// <summary>One found lobby, named by whoever is hosting it.</summary>
+    internal sealed class LobbySlot : MenuAction
+    {
+        private readonly int _slot;
+
+        public LobbySlot(int slot)
+            : base(string.Empty, null)
+        {
+            _slot = slot;
+        }
+
+        protected override string Label
+        {
+            get
+            {
+                var found = ModEntry.Netplay.Found;
+                return _slot < found.Count
+                    ? (found[_slot].HostName ?? "a friend")
+                    : string.Empty;
+            }
+        }
+
+        protected override bool Act()
+        {
+            return ModEntry.Netplay.JoinFound(_slot);
+        }
+    }
+
+    /// <summary>Something to read rather than press.</summary>
+    internal sealed class MenuText : IBTSimpleMenuItem
+    {
+        private readonly string _text;
+
+        public MenuText(string text)
+        {
+            _text = text;
+        }
+
+        public override void Draw(int x, int y, bool selected)
+        {
+            MenuItemHelper.Draw(
+                x,
+                y,
+                _text,
+                Color.Gray,
+                Game1.instance.contentManager.font.MenuFont
+            );
+        }
+
+        public override Point GetSize()
+        {
+            return MenuItemHelper.GetSize(_text);
+        }
+
+        protected override BTresult MyRun(TickData p_data)
+        {
+            return BTresult.Failure;
+        }
+    }
+
+    /// <summary>
     /// Auto or Manual, cycled with left and right like every other option here.
     ///
-    /// Auto cannot be answered when the lobby is created - there is nobody on the
-    /// other end to measure yet - so it is answered when somebody joins, from the
-    /// handshake's own round trip. Manual is the escape hatch for a connection
-    /// that measures badly, or for someone who would rather decide.
+    /// Auto is answered when somebody joins, from the handshake's own round trip,
+    /// because when the lobby is created there is nobody on the other end to
+    /// measure. Manual is for a connection that measures badly, or for somebody
+    /// who would rather decide.
     /// </summary>
     public class NetworkModeOption : IOptions
     {
@@ -208,221 +578,6 @@ namespace LocalMultiplayerMod
         {
             NetplaySettings.ManualDelayFrames =
                 option + RollbackPlan.MinInputDelayFrames;
-        }
-    }
-
-    /// <summary>
-    /// A top-level entry whose label, availability and contents follow the state
-    /// of the mode it opens.
-    ///
-    /// It holds one <see cref="MenuSelector" /> and shows a different set of its
-    /// lines either side of the action, rather than swapping in a second
-    /// selector. That is forced, not preferred:
-    /// <c>MenuFactory.TryCreateModSetting</c> takes the decorator's child at
-    /// construction and registers only that one for drawing, so a selector handed
-    /// over later would run without ever being drawn. <c>EnableMenuItem</c> and
-    /// <c>DisableMenuItem</c> are the mechanism the game already has for this,
-    /// down to recalculating the frame around whatever is currently shown.
-    /// </summary>
-    public sealed class ModeEntrance : TextButton
-    {
-        private readonly MenuSelector _menu;
-        private readonly Func<string> _label;
-        private readonly IMenuItem[] _idleItems;
-        private readonly IMenuItem[] _runningItems;
-        private readonly Func<bool> _isRunning;
-        private readonly Func<bool> _isBlocked;
-        private readonly IMenuItem _conditional;
-        private readonly Func<bool> _conditionalShown;
-
-        public ModeEntrance(
-            MenuSelector menu,
-            Func<string> label,
-            IMenuItem[] idleItems,
-            IMenuItem[] runningItems,
-            Func<bool> isRunning,
-            Func<bool> isBlocked
-        )
-            : this(menu, label, idleItems, runningItems, isRunning, isBlocked, null, null)
-        {
-        }
-
-        /// <param name="conditional">
-        /// A line that is only worth showing under some further condition, on top
-        /// of being an idle-state line at all. Null when there is none.
-        /// </param>
-        public ModeEntrance(
-            MenuSelector menu,
-            Func<string> label,
-            IMenuItem[] idleItems,
-            IMenuItem[] runningItems,
-            Func<bool> isRunning,
-            Func<bool> isBlocked,
-            IMenuItem conditional,
-            Func<bool> conditionalShown
-        )
-            : base("", menu)
-        {
-            _menu = menu;
-            _label = label;
-            _idleItems = idleItems;
-            _runningItems = runningItems;
-            _isRunning = isRunning;
-            _isBlocked = isBlocked;
-            _conditional = conditional;
-            _conditionalShown = conditionalShown;
-
-            ShowLinesForState();
-        }
-
-        public override void Draw(int x, int y, bool selected)
-        {
-            MenuItemHelper.Draw(
-                x,
-                y,
-                _label(),
-                _isBlocked() && !_isRunning() ? Color.Gray : Color.White,
-                Game1.instance.contentManager.font.MenuFont
-            );
-        }
-
-        public override Point GetSize()
-        {
-            return MenuItemHelper.GetSize(_label());
-        }
-
-        protected override BTresult MyRun(TickData p_data)
-        {
-            // A menu already open stays open, whatever the state has become while
-            // the player was inside it - except for the one line whose condition
-            // the player changes from inside this very menu, which has to follow
-            // them or the control they just used would appear to do nothing.
-            if (last_result == BTresult.Running)
-            {
-                ShowConditional();
-                return base.MyRun(p_data);
-            }
-
-            // Never blocked out of the mode you are in. The two conditions are
-            // meant to be exclusive, and when they were not - netplay raises the
-            // player count, which the online entry was reading as "local
-            // multiplayer is running" - a running session had no way out of
-            // itself at all. The predicates are fixed; this makes the fix
-            // unnecessary rather than relying on it, because the way out is the
-            // one thing that must never be unreachable.
-            if (_isBlocked() && !_isRunning())
-            {
-                return BTresult.Failure;
-            }
-
-            ShowLinesForState();
-            return base.MyRun(p_data);
-        }
-
-        /// <summary>
-        /// Settings and the action before a mode is running; the things that only
-        /// mean something once it is, after. Applied on the way in rather than
-        /// held, because which half applies is a question about right now.
-        /// </summary>
-        private void ShowLinesForState()
-        {
-            bool running = _isRunning();
-            Show(_idleItems, !running);
-            Show(_runningItems, running);
-            ShowConditional();
-        }
-
-        private void ShowConditional()
-        {
-            if (_conditional == null)
-            {
-                return;
-            }
-
-            Show(
-                new IMenuItem[] { _conditional },
-                !_isRunning() && _conditionalShown()
-            );
-        }
-
-        private void Show(IMenuItem[] items, bool shown)
-        {
-            for (int i = 0; i < items.Length; i++)
-            {
-                if (shown)
-                {
-                    _menu.EnableMenuItem(items[i]);
-                }
-                else
-                {
-                    _menu.DisableMenuItem(items[i]);
-                }
-            }
-        }
-    }
-
-    /// <summary>
-    /// A line that does one thing and then closes the menu it lives in.
-    ///
-    /// Closing is <see cref="MenuSelector.SetResult" />. A selector returns
-    /// Running for as long as it is open, and only a set result or a cancel ends
-    /// it - so an action that merely succeeded would leave the menu sitting there
-    /// looking as though nothing had happened.
-    /// </summary>
-    internal sealed class MenuAction : IBTSimpleMenuItem
-    {
-        private readonly Func<string> _label;
-        private readonly MenuSelector _menu;
-        private readonly Func<bool> _act;
-
-        public MenuAction(string label, MenuSelector menu, Func<bool> act)
-            : this(() => label, menu, act)
-        {
-        }
-
-        /// <param name="act">
-        /// Returns whether the menu should close. False keeps it open, which is
-        /// what an action worth repeating needs, and also what a refused action
-        /// needs so the player can see that it did not take.
-        /// </param>
-        public MenuAction(Func<string> label, MenuSelector menu, Func<bool> act)
-        {
-            _label = label;
-            _menu = menu;
-            _act = act;
-        }
-
-        public override void Draw(int x, int y, bool selected)
-        {
-            MenuItemHelper.Draw(
-                x,
-                y,
-                _label(),
-                Color.White,
-                Game1.instance.contentManager.font.MenuFont
-            );
-        }
-
-        public override Point GetSize()
-        {
-            return MenuItemHelper.GetSize(_label());
-        }
-
-        protected override BTresult MyRun(TickData p_data)
-        {
-            if (!ControllerManager.instance.MenuController.GetPadState().confirm)
-            {
-                return BTresult.Failure;
-            }
-
-            ControllerManager.instance.MenuController.ConsumePadPresses();
-
-            if (_act())
-            {
-                _menu.SetResult(BTresult.Success);
-            }
-
-            return BTresult.Success;
         }
     }
 }

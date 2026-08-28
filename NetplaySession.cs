@@ -489,7 +489,6 @@ namespace LocalMultiplayerMod
         private void OnSearchFinished(int found)
         {
             _searching = false;
-            _selected = 0;
 
             NetplayNotice.Show(
                 found == 0
@@ -504,34 +503,27 @@ namespace LocalMultiplayerMod
             get { return _transport.Found; }
         }
 
-        /// <summary>Which one the menu is pointing at.</summary>
-        public int Selected
-        {
-            get { return _selected; }
-        }
 
-        private int _selected;
-
-        public void SelectNext(int step)
+        /// <summary>
+        /// Joins one of the lobbies found, by its place in the list.
+        ///
+        /// Replaces a selected-index cursor and a pair of controls for moving it.
+        /// The list is shown as a list now, so which one the player means is the
+        /// line they pressed rather than something the session has to remember
+        /// for them.
+        /// </summary>
+        /// <returns>Whether the join was attempted.</returns>
+        public bool JoinFound(int index)
         {
-            int count = _transport.Found.Count;
-            if (count == 0)
+            if (_phase != Phase.Idle ||
+                index < 0 ||
+                index >= _transport.Found.Count)
             {
-                return;
+                return false;
             }
 
-            _selected = ((_selected + step) % count + count) % count;
-        }
-
-        /// <summary>Joins the lobby the menu is pointing at.</summary>
-        public void JoinSelected()
-        {
-            if (_phase != Phase.Idle || _transport.Found.Count == 0)
-            {
-                return;
-            }
-
-            _transport.JoinFound(_selected);
+            _transport.JoinFound(index);
+            return true;
         }
 
         /// <summary>
