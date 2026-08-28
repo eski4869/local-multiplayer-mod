@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
 	<PropertyGroup>
 		<Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
@@ -76,6 +76,7 @@
 		<Compile Include="NetplayClock.cs" />
 		<Compile Include="NetplayInput.cs" />
 		<Compile Include="NetplaySession.cs" />
+		<Compile Include="NetplaySessionReport.cs" />
 		<Compile Include="Resimulation.cs" />
 		<Compile Include="RollbackBuffer.cs" />
 		<Compile Include="RollbackPlan.cs" />
@@ -86,6 +87,7 @@
 		<Compile Include="FrameBudget.cs" />
 		<Compile Include="SnapshotCost.cs" />
 		<Compile Include="NetplayLevelIdentity.cs" />
+		<Compile Include="NetplayLog.cs" />
 		<Compile Include="NetplayNameTags.cs" />
 		<Compile Include="NetplayNotice.cs" />
 		<Compile Include="NetplayPacket.cs" />

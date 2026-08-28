@@ -22,6 +22,7 @@
     <Compile Include="..\UserCommandRouting.cs" Link="UserCommandRouting.cs" />
     <Compile Include="..\GatherCommand.cs" Link="GatherCommand.cs" />
     <Compile Include="..\RollbackPlan.cs" Link="RollbackPlan.cs" />
+    <Compile Include="..\NetplaySessionReport.cs" Link="NetplaySessionReport.cs" />
     <Compile Include="..\RemoteInputResolver.cs" Link="RemoteInputResolver.cs" />
     <Compile Include="..\Correction.cs" Link="Correction.cs" />
     <Compile Include="..\SessionLifecycle.cs" Link="SessionLifecycle.cs" />

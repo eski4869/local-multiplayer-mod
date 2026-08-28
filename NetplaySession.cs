@@ -555,6 +555,11 @@ namespace LocalMultiplayerMod
             _remoteInputs.Reset();
             _usedRemote.Reset();
             _rollback.Clear();
+            string summary = _report.Finish();
+            if (summary != null)
+            {
+                NetplayLog.Write(summary);
+            }
             _clock.Stop();
         }
 
@@ -731,6 +736,7 @@ namespace LocalMultiplayerMod
             //
             // A measurement must never be gated on the thing it is measuring.
             _localFrameAdvantage.Add(LocalFrameAdvantage);
+            _report.NoteFrame(_frame - _remoteInputs.ConfirmedThrough);
 
             // A peer that has stopped speaking has stopped playing.
             //
@@ -824,6 +830,7 @@ namespace LocalMultiplayerMod
 
             _frame++;
             _localFrameAdvantage.Add(LocalFrameAdvantage);
+            _report.NoteFrame(_frame - _remoteInputs.ConfirmedThrough);
             _clock.NoteSimulatedFrame();
             CaptureLocalInput();
             SendInputs();
@@ -1192,6 +1199,7 @@ namespace LocalMultiplayerMod
             {
                 _rollbackCount++;
                 _resimulatedFrames += result.Replayed;
+                _report.NoteRollback(result.Replayed);
                 _resimulateMilliseconds += timer.Elapsed.TotalMilliseconds;
                 return;
             }
@@ -1927,6 +1935,8 @@ namespace LocalMultiplayerMod
                 _rollback.Clear();
                 _clock.Start();
 
+                _report.Start(ModEntry.IsBattleMode);
+
                 // The other king appears now, not when the lobby opened: there is
                 // finally somebody driving it.
                 SetSecondPlayerPresent(true);
@@ -2227,6 +2237,12 @@ namespace LocalMultiplayerMod
         /// quit.
         /// </summary>
         private const int PeerSilenceLimit = 120;
+
+        /// <summary>
+        /// Counts this session in memory and writes one line when it ends.
+        /// </summary>
+        private readonly NetplaySessionReport _report =
+            new NetplaySessionReport();
 
         private readonly FrameAdvantageWindow _localFrameAdvantage =
             new FrameAdvantageWindow();
