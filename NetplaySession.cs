@@ -242,6 +242,16 @@ namespace LocalMultiplayerMod
             get { return _transport.IsLobbyOwner; }
         }
 
+        /// <summary>
+        /// Frames since the session began, or -1 when there is no agreed origin
+        /// to count from. Both machines hold this number exactly, which is what
+        /// makes it usable as a clock two simulations can share.
+        /// </summary>
+        public long SessionFrames
+        {
+            get { return _startFrame < 0 ? -1 : _frame - _startFrame; }
+        }
+
         /// <summary>Who is on the other end, or null.</summary>
         public string PeerName
         {
@@ -342,6 +352,24 @@ namespace LocalMultiplayerMod
         public void OnLevelStarted()
         {
             NetplayLevelIdentity.Invalidate();
+
+            // A level reloading under a live session leaves the world rebuilt and
+            // the frame counter still running, so the two machines would share a
+            // clock and nothing else. Everything a correction cannot repair -
+            // every entity no snapshot covers - has just been put back to a known
+            // state on both sides, which makes this the one moment the two worlds
+            // are identical and worth agreeing an origin from.
+            //
+            // Dropping back to the handshake is the whole of it. That code already
+            // knows how to agree an origin, it resends its greeting every frame
+            // until the other side is listening - so whichever machine restarts
+            // first simply waits - and it already gives up if the peer never
+            // arrives.
+            if (_phase == Phase.Playing)
+            {
+                Resynchronise();
+                return;
+            }
 
             if (_phase == Phase.NeedsLevel)
             {
@@ -1657,6 +1685,35 @@ namespace LocalMultiplayerMod
             }
 
             NetplayNotice.Show("started with the host at frame " + frame);
+        }
+
+        /// <summary>
+        /// Gives up the agreed origin and asks for another one.
+        ///
+        /// The measurement is closed out first. A restart divides one session
+        /// into two stretches with a rebuilt world between them, and averaging
+        /// across that boundary would describe neither.
+        /// </summary>
+        private void Resynchronise()
+        {
+            string summary = _report.Finish();
+            if (summary != null)
+            {
+                NetplayLog.Write(summary);
+            }
+
+            _startFrame = -1;
+            _frame = -1;
+            _lastAppliedRemote = -1;
+            _peerFrame = -1;
+            _localInputs.Reset();
+            _remoteInputs.Reset();
+            _usedRemote.Reset();
+            _rollback.Clear();
+            _framesHandshaking = 0;
+            _beyondRepair = false;
+
+            SendHello();
         }
 
         /// <summary>
