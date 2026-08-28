@@ -88,7 +88,7 @@
 		<Compile Include="SnapshotCost.cs" />
 		<Compile Include="NetplayLevelIdentity.cs" />
 		<Compile Include="NetplayLog.cs" />
-		<Compile Include="NetplayMenu.cs" />
+		<Compile Include="MultiplayerMenu.cs" />
 		<Compile Include="NetplayNameTags.cs" />
 		<Compile Include="NetplayNotice.cs" />
 		<Compile Include="NetplayPacket.cs" />

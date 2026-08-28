@@ -335,17 +335,28 @@ namespace LocalMultiplayerMod
         }
 
         /// <summary>
-        /// One entry, not seven. See <see cref="NetplayMenu" /> for why the
-        /// settings belong inside the thing that consumes them.
+        /// Two entries, one per mode. See <see cref="MultiplayerMenu" /> for why
+        /// the local settings are not inside the online one, and why each entry
+        /// is also its own way out.
         /// </summary>
         [PauseMenuItemSetting]
         [MainMenuItemSetting]
-        public static JumpKing.PauseMenu.BT.TextButton LocalMultiplayerOnlineMenu(
+        public static ModeEntrance LocalMultiplayerLocalMenu(
             object factory,
             JumpKing.PauseMenu.GuiFormat format
         )
         {
-            return NetplayMenu.Create(format);
+            return MultiplayerMenu.CreateLocal(format);
+        }
+
+        [PauseMenuItemSetting]
+        [MainMenuItemSetting]
+        public static ModeEntrance LocalMultiplayerOnlineMenu(
+            object factory,
+            JumpKing.PauseMenu.GuiFormat format
+        )
+        {
+            return MultiplayerMenu.CreateOnline(format);
         }
 
         private static void EnsurePatched()
@@ -1280,16 +1291,21 @@ namespace LocalMultiplayerMod
             }
         }
 
+        /// <summary>
+        /// What Start will use. Cycling this control no longer changes anything
+        /// on its own: the screen splitting the instant a number was passed left
+        /// no moment at which the choice was taken, and that moment is what this
+        /// menu exists to give back.
+        /// </summary>
+        public int SelectedPlayerCount
+        {
+            get { return OptionToPlayerCount(CurrentOption); }
+        }
+
         protected override void OnOptionChange(int option)
         {
-            int playerCount = OptionToPlayerCount(option);
-            if (ModEntry.SetPlayerMode(playerCount, ModEntry.TwoPlayerLayout))
-            {
-                CurrentOption = option;
-                return;
-            }
-
-            CurrentOption = PlayerCountToOption(ModEntry.PlayerCount);
+            // The base class has already recorded the option by the time this
+            // runs, and recording it is the whole job now. Start does the rest.
         }
 
         private static int PlayerCountToOption(int playerCount)
@@ -1357,16 +1373,17 @@ namespace LocalMultiplayerMod
             }
         }
 
+        /// <summary>
+        /// What Start will use, the same way
+        /// <see cref="LocalMultiplayerModeOption.SelectedPlayerCount" /> is.
+        /// </summary>
+        public TwoPlayerLayout SelectedLayout
+        {
+            get { return OptionToLayout(CurrentOption); }
+        }
+
         protected override void OnOptionChange(int option)
         {
-            TwoPlayerLayout layout = OptionToLayout(option);
-            if (ModEntry.SetPlayerMode(ModEntry.PlayerCount, layout))
-            {
-                CurrentOption = option;
-                return;
-            }
-
-            CurrentOption = LayoutToOption(ModEntry.TwoPlayerLayout);
         }
 
         private static int LayoutToOption(TwoPlayerLayout layout)
