@@ -140,7 +140,15 @@ namespace LocalMultiplayerMod
         /// which buys most of the benefit before becoming the thing complained
         /// about.
         /// </summary>
-        private const int InputDelayFrames = RollbackPlan.InputDelayFrames;
+        /// <summary>
+        /// Read through RollbackPlan rather than copied, because it is now a
+        /// per-session value the host decides and a copy taken once would be the
+        /// old answer for the rest of the run.
+        /// </summary>
+        private static int InputDelayFrames
+        {
+            get { return RollbackPlan.InputDelayFrames; }
+        }
 
         /// <summary>
         /// The frame whose inputs the simulation is running.
@@ -555,6 +563,12 @@ namespace LocalMultiplayerMod
             _remoteInputs.Reset();
             _usedRemote.Reset();
             _rollback.Clear();
+            // The next session decides its own delay, and starts by measuring
+            // nothing rather than by inheriting this one's answer.
+            RollbackPlan.ResetInputDelayFrames();
+            _helloSentAt = 0;
+            _handshakeRoundTripMilliseconds = 0.0;
+
             string summary = _report.Finish();
             if (summary != null)
             {
@@ -1158,6 +1172,10 @@ namespace LocalMultiplayerMod
             _phase = Phase.Handshaking;
             _levelHash = NetplayLevelIdentity.Current;
 
+            // The handshake is the only round trip that exists before a session
+            // does, so it is the only thing Auto has to work from.
+            _helloSentAt = System.Diagnostics.Stopwatch.GetTimestamp();
+
             int length = NetplayPacket.WriteHello(
                 _sendBuffer,
                 _levelHash,
@@ -1557,7 +1575,20 @@ namespace LocalMultiplayerMod
             // beyond the host not knowing it. Saying where you are costs the same
             // and leaves both runs alone.
             Vector2 at = me.Body.Position;
-            int length = NetplayPacket.WriteStart(_sendBuffer, _frame, at.X, at.Y);
+
+            // Settled here rather than when the lobby opened, because Auto needs
+            // somebody on the other end to measure and there was nobody then.
+            RollbackPlan.SetInputDelayFrames(
+                NetplaySettings.Resolve(_handshakeRoundTripMilliseconds)
+            );
+
+            int length = NetplayPacket.WriteStart(
+                _sendBuffer,
+                _frame,
+                at.X,
+                at.Y,
+                RollbackPlan.InputDelayFrames
+            );
             _transport.BroadcastReliable(_sendBuffer, length);
         }
 
@@ -1566,7 +1597,15 @@ namespace LocalMultiplayerMod
             long frame;
             float x;
             float y;
-            if (!NetplayPacket.ReadStart(payload, length, out frame, out x, out y))
+            int delay;
+            if (!NetplayPacket.ReadStart(
+                payload,
+                length,
+                out frame,
+                out x,
+                out y,
+                out delay
+            ))
             {
                 return;
             }
@@ -1582,6 +1621,11 @@ namespace LocalMultiplayerMod
                 // position, which is all that was wanted from it.
                 return;
             }
+
+            // The host decides the delay and this machine takes it. Applied with
+            // the origin and before any frame is simulated, so there is no window
+            // in which the two sides are running different offsets.
+            RollbackPlan.SetInputDelayFrames(delay);
 
             // Position and frame together, in one step. Applying them separately is
             // what let the two sides agree on where the players were while
@@ -1606,7 +1650,8 @@ namespace LocalMultiplayerMod
                     _sendBuffer,
                     frame,
                     me.Body.Position.X,
-                    me.Body.Position.Y
+                    me.Body.Position.Y,
+                    RollbackPlan.InputDelayFrames
                 );
                 _transport.BroadcastReliable(_sendBuffer, reply);
             }
@@ -1901,6 +1946,13 @@ namespace LocalMultiplayerMod
             ))
             {
                 return;
+            }
+
+            if (_helloSentAt > 0 && _handshakeRoundTripMilliseconds <= 0.0)
+            {
+                _handshakeRoundTripMilliseconds =
+                    (System.Diagnostics.Stopwatch.GetTimestamp() - _helloSentAt) *
+                        1000.0 / System.Diagnostics.Stopwatch.Frequency;
             }
 
             if (protocol != NetplayPacket.ProtocolVersion)
@@ -2237,6 +2289,15 @@ namespace LocalMultiplayerMod
         /// quit.
         /// </summary>
         private const int PeerSilenceLimit = 120;
+
+        /// <summary>
+        /// When this machine last said hello, and how long the answer took.
+        /// Only the first answer is kept: later ones are measuring a peer that
+        /// is already talking, which is a different quantity.
+        /// </summary>
+        private long _helloSentAt;
+
+        private double _handshakeRoundTripMilliseconds;
 
         /// <summary>
         /// Counts this session in memory and writes one line when it ends.

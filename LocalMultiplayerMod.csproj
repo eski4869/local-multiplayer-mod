@@ -76,6 +76,7 @@
 		<Compile Include="NetplayClock.cs" />
 		<Compile Include="NetplayInput.cs" />
 		<Compile Include="NetplaySession.cs" />
+		<Compile Include="NetplaySettings.cs" />
 		<Compile Include="NetplaySessionReport.cs" />
 		<Compile Include="Resimulation.cs" />
 		<Compile Include="RollbackBuffer.cs" />

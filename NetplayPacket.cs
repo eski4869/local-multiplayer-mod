@@ -24,7 +24,7 @@ namespace LocalMultiplayerMod
         /// misread. Checked at handshake so a mismatch is refused with a reason
         /// rather than showing up as a peer who behaves strangely.
         /// </summary>
-        public const byte ProtocolVersion = 4;
+        public const byte ProtocolVersion = 5;
 
         public enum Kind : byte
         {
@@ -385,9 +385,23 @@ namespace LocalMultiplayerMod
             return true;
         }
 
-        public static int WriteStart(byte[] buffer, long frame, float x, float y)
+        /// <summary>
+        /// Carries the input delay because the host is the one that decides it
+        /// and both machines have to hold the same number. Sent with the origin
+        /// rather than announced separately: the frame a session starts on and
+        /// the offset between a press and its effect are the same fact about
+        /// when, and splitting them is how the two sides end up agreeing on one
+        /// and not the other.
+        /// </summary>
+        public static int WriteStart(
+            byte[] buffer,
+            long frame,
+            float x,
+            float y,
+            int inputDelayFrames
+        )
         {
-            if (buffer == null || buffer.Length < 13)
+            if (buffer == null || buffer.Length < 14)
             {
                 return 0;
             }
@@ -396,7 +410,8 @@ namespace LocalMultiplayerMod
             WriteUInt32(buffer, 1, (uint)frame);
             WriteUInt32(buffer, 5, ToBits(x));
             WriteUInt32(buffer, 9, ToBits(y));
-            return 13;
+            buffer[13] = (byte)inputDelayFrames;
+            return 14;
         }
 
         public static bool ReadStart(
@@ -404,13 +419,15 @@ namespace LocalMultiplayerMod
             int length,
             out long frame,
             out float x,
-            out float y
+            out float y,
+            out int inputDelayFrames
         )
         {
             frame = 0;
             x = 0f;
             y = 0f;
-            if (buffer == null || length < 13 || buffer[0] != (byte)Kind.Start)
+            inputDelayFrames = RollbackPlan.DefaultInputDelayFrames;
+            if (buffer == null || length < 14 || buffer[0] != (byte)Kind.Start)
             {
                 return false;
             }
@@ -418,6 +435,7 @@ namespace LocalMultiplayerMod
             frame = ReadUInt32(buffer, 1);
             x = FromBits(ReadUInt32(buffer, 5));
             y = FromBits(ReadUInt32(buffer, 9));
+            inputDelayFrames = buffer[13];
             return true;
         }
 

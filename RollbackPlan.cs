@@ -24,7 +24,53 @@ namespace LocalMultiplayerMod
         /// the common short gap for free, and the rollback covers what the delay
         /// does not.
         /// </summary>
-        public const int InputDelayFrames = 2;
+        public const int DefaultInputDelayFrames = 2;
+
+        /// <summary>
+        /// The range a host may choose from. Nought is pure rollback; eight is
+        /// what the fighting games that expose this control at all offer, and
+        /// past it the delay costs more than the rollback it is saving.
+        /// </summary>
+        public const int MinInputDelayFrames = 0;
+
+        public const int MaxInputDelayFrames = 8;
+
+        private static int _inputDelayFrames = DefaultInputDelayFrames;
+
+        /// <summary>
+        /// Settable because the host decides it per session and both machines
+        /// must hold the same number - a session where the two disagree about
+        /// which frame an input lands on is not a session, it is two games.
+        /// Every read is through here so there is one answer at a time.
+        /// </summary>
+        public static int InputDelayFrames
+        {
+            get { return _inputDelayFrames; }
+        }
+
+        /// <summary>
+        /// Clamped rather than rejected. The value arrives off the wire from the
+        /// other machine, and a session refusing to start over a byte it could
+        /// have brought into range would be the worse failure.
+        /// </summary>
+        public static void SetInputDelayFrames(int frames)
+        {
+            if (frames < MinInputDelayFrames)
+            {
+                frames = MinInputDelayFrames;
+            }
+            else if (frames > MaxInputDelayFrames)
+            {
+                frames = MaxInputDelayFrames;
+            }
+
+            _inputDelayFrames = frames;
+        }
+
+        public static void ResetInputDelayFrames()
+        {
+            _inputDelayFrames = DefaultInputDelayFrames;
+        }
 
         /// <summary>
         /// How far ahead of confirmed input the simulation may guess.

@@ -210,14 +210,28 @@ namespace LocalMultiplayerMod.Tests
             const float X = 214.52911f;
             const float Y = -39914.375f;
 
-            int length = NetplayPacket.WriteStart(buffer, 4242, X, Y);
+            int length = NetplayPacket.WriteStart(buffer, 4242, X, Y, 3);
 
             float x;
             float y;
             long frame;
+            int delay;
             Assert.IsTrue(
-                NetplayPacket.ReadStart(buffer, length, out frame, out x, out y)
+                NetplayPacket.ReadStart(
+                    buffer,
+                    length,
+                    out frame,
+                    out x,
+                    out y,
+                    out delay
+                )
             );
+
+            // The delay rides with the origin because both machines must act on a
+            // press at the same frame, and only the host decides which frame that
+            // is. Splitting the two apart is how they end up agreeing on when a
+            // session began and not on when an input lands.
+            Assert.AreEqual(3, delay);
 
             // The frame matters as much as the coordinates: without it the two
             // machines agreed where the players stood and not when, and the same
@@ -241,12 +255,20 @@ namespace LocalMultiplayerMod.Tests
                 0f, -0f, 0.1f, -1234.5678f, float.Epsilon, 1e20f
             })
             {
-                int length = NetplayPacket.WriteStart(buffer, 1, value, value);
+                int length = NetplayPacket.WriteStart(buffer, 1, value, value, 0);
 
                 float x;
                 float y;
                 long frame;
-                NetplayPacket.ReadStart(buffer, length, out frame, out x, out y);
+                int delay;
+                NetplayPacket.ReadStart(
+                    buffer,
+                    length,
+                    out frame,
+                    out x,
+                    out y,
+                    out delay
+                );
                 Assert.AreEqual(value, x, 0f);
             }
         }
@@ -271,13 +293,21 @@ namespace LocalMultiplayerMod.Tests
         public void RejectsATruncatedStartOrChecksum()
         {
             var buffer = new byte[NetplayPacket.MaxSize];
-            NetplayPacket.WriteStart(buffer, 7, 1f, 2f);
+            NetplayPacket.WriteStart(buffer, 7, 1f, 2f, 2);
 
             float x;
             float y;
             long startFrame;
+            int delay;
             Assert.IsFalse(
-                NetplayPacket.ReadStart(buffer, 5, out startFrame, out x, out y)
+                NetplayPacket.ReadStart(
+                    buffer,
+                    5,
+                    out startFrame,
+                    out x,
+                    out y,
+                    out delay
+                )
             );
 
             NetplayPacket.WriteChecksum(buffer, 1, 2);
