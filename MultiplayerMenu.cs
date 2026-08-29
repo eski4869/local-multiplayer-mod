@@ -260,6 +260,7 @@ namespace LocalMultiplayerMod
             // multiplayer is not merely unavailable then, it is beside the point:
             // a line nobody can press is still a line to read past.
             return new Slot(
+                page,
                 MenuLine.Shown(
                     new MenuAction("Invite a friend", Invite),
                     delegate { return IsRunning(ModeKind.Online); }
@@ -362,6 +363,7 @@ namespace LocalMultiplayerMod
             // things left to do are invite and end it, and they are the whole of
             // the menu rather than the contents of something else.
             return new Slot(
+                page,
                 MenuLine.Shown(
                     new MenuAction(CloseLabel, CloseSession),
                     running
@@ -455,11 +457,26 @@ namespace LocalMultiplayerMod
     /// up, and it is what lets a session replace both entries outright rather than
     /// greying one and burying the other.
     /// </summary>
-    public sealed class Slot : IBTSimpleMenuItem
+    /// <summary>
+    /// Derives from <c>IBTMenuDecorator</c> and hands its page over as the child,
+    /// which is not decoration: <c>MenuFactory.TryCreateModSetting</c> only
+    /// registers a mod's submenus for drawing when what it gets back is a
+    /// decorator whose child is a <c>MenuSelector</c>, and it walks down from
+    /// there. Returning anything else registers nothing, and a page that runs
+    /// without being drawn takes the screen and the controls and gives back
+    /// neither - the parent stops handling cancel while a child is running, so
+    /// there is not even a way out. It reads exactly like a freeze, because from
+    /// where the player is sitting it is one.
+    ///
+    /// The child is only ever this: the page the idle entrance opens. What the
+    /// slot actually runs is chosen per tick below.
+    /// </summary>
+    public sealed class Slot : IBTMenuDecorator
     {
         private readonly MenuLine[] _alternatives;
 
-        internal Slot(params MenuLine[] alternatives)
+        internal Slot(Page page, params MenuLine[] alternatives)
+            : base(page.Selector)
         {
             _alternatives = alternatives;
         }
