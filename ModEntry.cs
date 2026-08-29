@@ -40,9 +40,17 @@ namespace LocalMultiplayerMod
             BrokerCommandClient.Register(CommandTarget);
         }
 
+        /// <summary>
+        /// Whether a level is running. The diagnostics are worth nothing on a
+        /// title screen and were reporting there anyway, once a second, for as
+        /// long as the game was open.
+        /// </summary>
+        internal static bool InLevel { get; private set; }
+
         [OnLevelStart]
         public static void OnLevelStart()
         {
+            InLevel = true;
             EnsurePreferencesLoaded();
             EnsurePatched();
             BrokerCommandClient.Register(CommandTarget);
@@ -56,13 +64,17 @@ namespace LocalMultiplayerMod
         [OnLevelEnd]
         public static void OnLevelEnd()
         {
+            InLevel = false;
             MultiplayerRuntime.OnLevelEnd();
+            NetplayLog.Flush();
         }
 
         [OnLevelUnload]
         public static void OnLevelUnload()
         {
+            InLevel = false;
             MultiplayerRuntime.OnLevelEnd();
+            NetplayLog.Flush();
         }
 
         internal static int PlayerCount

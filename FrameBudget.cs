@@ -72,7 +72,7 @@ namespace LocalMultiplayerMod
 
         public static void Note(bool runningSlowly)
         {
-            if (!Enabled)
+            if (!Enabled || !ModEntry.InLevel)
             {
                 return;
             }

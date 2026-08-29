@@ -1761,6 +1761,8 @@ namespace LocalMultiplayerMod
                 NetplayLog.Write(summary);
             }
 
+            NetplayLog.Flush();
+
             _startFrame = -1;
             _frame = -1;
             _lastAppliedRemote = -1;
