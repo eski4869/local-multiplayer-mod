@@ -63,9 +63,53 @@ namespace LocalMultiplayerMod
         /// walking the tree it is handed at construction, so a page in place from
         /// the start is drawn and one substituted later is not.
         /// </summary>
-        public static MenuLine Opening(string label, Page page, Func<bool> when)
+        /// <param name="whileOpen">
+        /// Run on every tick the page is open, and on none while it is not. A
+        /// list of what is out there has to keep asking while somebody is looking
+        /// at it, and asking on the way in only would show them one snapshot of a
+        /// moment that has passed.
+        /// </param>
+        public static MenuLine Opening(
+            string label,
+            Page page,
+            Func<bool> when,
+            Action whileOpen = null
+        )
         {
-            return new MenuLine(new TextButton(label, page.Selector), when, page);
+            return new MenuLine(
+                new PageDoor(label, page, whileOpen),
+                when,
+                page
+            );
+        }
+    }
+
+    /// <summary>
+    /// A door onto a page, which can keep something running for as long as it is
+    /// standing open.
+    /// </summary>
+    internal sealed class PageDoor : TextButton
+    {
+        private readonly Action _whileOpen;
+
+        public PageDoor(string label, Page page, Action whileOpen)
+            : base(label, page.Selector)
+        {
+            _whileOpen = whileOpen;
+        }
+
+        protected override BTresult MyRun(TickData p_data)
+        {
+            BTresult result = base.MyRun(p_data);
+
+            // Running is the selector saying it is still on screen. Anything else
+            // means the page is shut, and a shut page has nothing to keep doing.
+            if (result == BTresult.Running && _whileOpen != null)
+            {
+                _whileOpen();
+            }
+
+            return result;
         }
     }
 
@@ -244,27 +288,21 @@ namespace LocalMultiplayerMod
 
             // Whose lobby to join.
             LobbySlot[] slots = new LobbySlot[LobbySlots];
-            MenuLine[] lines = new MenuLine[LobbySlots + 4];
+            MenuLine[] lines = new MenuLine[LobbySlots + 3];
 
             // Nothing was ever searching. The list showed "searching..." whenever
             // it was empty and no search had been started, because the redesign
             // moved the display of the results across and left the asking behind:
             // Join used to start a search on the press that opened it, and after
-            // the rewrite nothing called it at all.
-            //
-            // A line rather than something that happens on the way in. The page
-            // is a list of lines and this is one of them, and a search somebody
-            // asked for can be asked for again when a friend opens a lobby late.
-            lines[0] = MenuLine.Always(
-                new MenuAction("Search for lobbies", Search)
-            );
-
-            lines[1] = MenuLine.Shown(
+            // the rewrite nothing called it at all. It asks once a second for as
+            // long as the page is open now, so a friend who opens a lobby while
+            // somebody is looking at the list turns up in it.
+            lines[0] = MenuLine.Shown(
                 new MenuText("searching..."),
                 delegate { return ModEntry.Netplay.IsSearching; }
             );
 
-            lines[2] = MenuLine.Shown(
+            lines[1] = MenuLine.Shown(
                 new MenuText("nothing found"),
                 delegate
                 {
@@ -278,7 +316,7 @@ namespace LocalMultiplayerMod
             {
                 int slot = i;
                 slots[slot] = new LobbySlot(slot);
-                lines[slot + 3] = MenuLine.Shown(
+                lines[slot + 2] = MenuLine.Shown(
                     slots[slot],
                     delegate { return slot < ModEntry.Netplay.Found.Count; }
                 );
@@ -288,7 +326,7 @@ namespace LocalMultiplayerMod
             // returns them in its own order and there is nothing here to rank them
             // by - so a list that quietly stopped at ten would be hiding lobbies
             // without admitting which.
-            lines[LobbySlots + 3] = MenuLine.Shown(
+            lines[LobbySlots + 2] = MenuLine.Shown(
                 new MenuText("...and more"),
                 delegate { return ModEntry.Netplay.Found.Count > LobbySlots; }
             );
@@ -305,7 +343,7 @@ namespace LocalMultiplayerMod
             Page page = new Page(
                 format,
                 MenuLine.Opening("Create lobby", setup, null),
-                MenuLine.Opening("Join", browse, null)
+                MenuLine.Opening("Join", browse, null, KeepSearching)
             );
 
             // Creating answers the question the whole branch was asking, so it
@@ -347,13 +385,37 @@ namespace LocalMultiplayerMod
             return ModEntry.SetPlayerMode(1, ModEntry.TwoPlayerLayout);
         }
 
-        private static bool Search()
-        {
-            ModEntry.Netplay.Join();
+        /// <summary>
+        /// How long to leave between asking Steam again. Once a second: often
+        /// enough that a lobby opened while somebody is reading the list appears
+        /// in it, and rare enough not to be hammering matchmaking from a menu.
+        /// </summary>
+        private const int SearchIntervalMilliseconds = 1000;
 
-            // Stays open. The results arrive here, and Refresh runs every tick, so
-            // closing the page would be closing the thing that was asked for.
-            return false;
+        private static int _lastSearchAt;
+
+        /// <summary>
+        /// Asks again, for as long as the list is being looked at. A search
+        /// already out is left alone - overlapping requests would answer out of
+        /// order and the later reply is not necessarily the newer one.
+        /// </summary>
+        private static void KeepSearching()
+        {
+            if (ModEntry.Netplay.IsSearching ||
+                ModEntry.Netplay.Current != NetplaySession.Phase.Idle)
+            {
+                return;
+            }
+
+            int now = Environment.TickCount;
+            if (_lastSearchAt != 0 &&
+                unchecked(now - _lastSearchAt) < SearchIntervalMilliseconds)
+            {
+                return;
+            }
+
+            _lastSearchAt = now;
+            ModEntry.Netplay.Join();
         }
 
         private static bool CreateLobby()
