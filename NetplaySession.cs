@@ -463,6 +463,7 @@ namespace LocalMultiplayerMod
             }
 
             _searching = true;
+            _hasSearched = true;
             NetplayNotice.Show("looking for a friend's lobby");
             _transport.FindLobbies();
         }
@@ -475,6 +476,18 @@ namespace LocalMultiplayerMod
         }
 
         private bool _searching;
+
+        /// <summary>
+        /// Whether a search has ever been made. Without it an empty list cannot
+        /// say whether it found nothing or was never asked, and it used to claim
+        /// to be searching when nothing had started.
+        /// </summary>
+        public bool HasSearched
+        {
+            get { return _hasSearched; }
+        }
+
+        private bool _hasSearched;
 
         private void OnSearchFinished(int found)
         {
@@ -974,7 +987,18 @@ namespace LocalMultiplayerMod
             TraceFrame();
             ReportCost();
 
-            if (_frame % ChecksumInterval == 0)
+            // Only a frame both machines have finished guessing about. A digest
+            // taken while the peer's input is still predicted is the hash of a
+            // guess, and two machines comparing two guesses report a drift that
+            // never happened - which is what "the two games have drifted apart"
+            // was doing on screens with nothing on them to drift.
+            //
+            // Samples are lost when the connection is behind. That is the right
+            // trade: fewer answers, but every one of them means something.
+            bool settled =
+                _remoteInputs.ConfirmedThrough >= _frame - InputDelayFrames;
+
+            if (_frame % ChecksumInterval == 0 && settled)
             {
                 // Kept so the peer's digest for the same frame has something to be
                 // compared against when it arrives.
@@ -2519,8 +2543,16 @@ namespace LocalMultiplayerMod
         {
             long confirmed = _remoteInputs.ConfirmedThrough;
 
+            // Measured against the frame whose input the simulation is actually
+            // consuming, not against the frame it is drawing. Those differ by the
+            // input delay, and comparing the wrong one stopped the game while the
+            // prediction was still inside its window: a real session logged
+            // fifty-one stalls with a peak lag of nine frames and a delay of two,
+            // so the deepest guess was seven against a window of eight. Every one
+            // of them was a freeze that did not need to happen.
             bool guessingTooFar =
-                confirmed >= 0 && _frame - confirmed >= MaxPredictionFrames;
+                confirmed >= 0 &&
+                SimulatedInputFrame - confirmed >= MaxPredictionFrames;
 
             // The frame-advantage stall is measured and reported but no longer
             // acted on. See FramesToWaitOut for why.

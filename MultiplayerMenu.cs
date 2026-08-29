@@ -244,17 +244,41 @@ namespace LocalMultiplayerMod
 
             // Whose lobby to join.
             LobbySlot[] slots = new LobbySlot[LobbySlots];
-            MenuLine[] lines = new MenuLine[LobbySlots + 2];
-            lines[0] = MenuLine.Shown(
+            MenuLine[] lines = new MenuLine[LobbySlots + 4];
+
+            // Nothing was ever searching. The list showed "searching..." whenever
+            // it was empty and no search had been started, because the redesign
+            // moved the display of the results across and left the asking behind:
+            // Join used to start a search on the press that opened it, and after
+            // the rewrite nothing called it at all.
+            //
+            // A line rather than something that happens on the way in. The page
+            // is a list of lines and this is one of them, and a search somebody
+            // asked for can be asked for again when a friend opens a lobby late.
+            lines[0] = MenuLine.Always(
+                new MenuAction("Search for lobbies", Search)
+            );
+
+            lines[1] = MenuLine.Shown(
                 new MenuText("searching..."),
-                delegate { return ModEntry.Netplay.Found.Count == 0; }
+                delegate { return ModEntry.Netplay.IsSearching; }
+            );
+
+            lines[2] = MenuLine.Shown(
+                new MenuText("nothing found"),
+                delegate
+                {
+                    return ModEntry.Netplay.HasSearched &&
+                        !ModEntry.Netplay.IsSearching &&
+                        ModEntry.Netplay.Found.Count == 0;
+                }
             );
 
             for (int i = 0; i < LobbySlots; i++)
             {
                 int slot = i;
                 slots[slot] = new LobbySlot(slot);
-                lines[slot + 1] = MenuLine.Shown(
+                lines[slot + 3] = MenuLine.Shown(
                     slots[slot],
                     delegate { return slot < ModEntry.Netplay.Found.Count; }
                 );
@@ -264,7 +288,7 @@ namespace LocalMultiplayerMod
             // returns them in its own order and there is nothing here to rank them
             // by - so a list that quietly stopped at ten would be hiding lobbies
             // without admitting which.
-            lines[LobbySlots + 1] = MenuLine.Shown(
+            lines[LobbySlots + 3] = MenuLine.Shown(
                 new MenuText("...and more"),
                 delegate { return ModEntry.Netplay.Found.Count > LobbySlots; }
             );
@@ -321,6 +345,15 @@ namespace LocalMultiplayerMod
         private static bool EndLocal()
         {
             return ModEntry.SetPlayerMode(1, ModEntry.TwoPlayerLayout);
+        }
+
+        private static bool Search()
+        {
+            ModEntry.Netplay.Join();
+
+            // Stays open. The results arrive here, and Refresh runs every tick, so
+            // closing the page would be closing the thing that was asked for.
+            return false;
         }
 
         private static bool CreateLobby()
