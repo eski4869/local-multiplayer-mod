@@ -116,7 +116,7 @@ namespace LocalMultiplayerMod
             {
                 // A malformed file is worth reporting: the author wrote it on
                 // purpose and would otherwise see it silently do nothing.
-                JumpKing.Program.crashLog.AddErrorMessage(
+                NetplayLog.Write(
                     "Local Multiplayer could not read " + FileName + ": " +
                     ex.Message
                 );

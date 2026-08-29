@@ -555,7 +555,7 @@ namespace LocalMultiplayerMod
         {
             if (created.m_eResult != EResult.k_EResultOK)
             {
-                JumpKing.Program.crashLog.AddErrorMessage(
+                NetplayLog.Write(
                     "Local Multiplayer could not create a lobby: " +
                     created.m_eResult
                 );

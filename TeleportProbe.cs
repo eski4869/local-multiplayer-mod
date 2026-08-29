@@ -67,7 +67,7 @@ namespace LocalMultiplayerMod
         {
             if (target == null)
             {
-                Program.crashLog.AddErrorMessage(
+                NetplayLog.Write(
                     "Local Multiplayer teleport probe: " +
                     "HandlePlayerTeleportBehaviour.ExecuteBehaviour not found."
                 );
@@ -118,13 +118,13 @@ namespace LocalMultiplayerMod
                 Patches info = Harmony.GetPatchInfo(_target);
                 if (info == null)
                 {
-                    Program.crashLog.AddErrorMessage(
+                    NetplayLog.Write(
                         "Local Multiplayer teleport patches: none"
                     );
                     return;
                 }
 
-                Program.crashLog.AddErrorMessage(
+                NetplayLog.Write(
                     "Local Multiplayer teleport patches:" +
                     " prefixes=" + Owners(info.Prefixes) +
                     " postfixes=" + Owners(info.Postfixes) +
@@ -134,7 +134,7 @@ namespace LocalMultiplayerMod
             }
             catch (Exception ex)
             {
-                Program.crashLog.AddErrorMessage(
+                NetplayLog.Write(
                     "Local Multiplayer teleport patches unavailable: " + ex.Message
                 );
             }
@@ -184,7 +184,7 @@ namespace LocalMultiplayerMod
             __state = body.Position;
             DescribePatchesOnce();
 
-            Program.crashLog.AddErrorMessage(
+            NetplayLog.Write(
                 "Local Multiplayer teleport attempt: player " + number +
                 " cameraScreen=" + Camera.CurrentScreen +
                 " contextScreen=" + PlayerScope.Current.Screen +
@@ -215,7 +215,7 @@ namespace LocalMultiplayerMod
                 return;
             }
 
-            Program.crashLog.AddErrorMessage(
+            NetplayLog.Write(
                 "Local Multiplayer teleport moved: player " + context.Number +
                 " from=" + Describe(__state) +
                 " to=" + Describe(body.Position) +

@@ -157,7 +157,7 @@ namespace LocalMultiplayerMod
             }
             catch (Exception ex)
             {
-                JumpKing.Program.crashLog.AddErrorMessage(
+                NetplayLog.Write(
                     "Local Multiplayer setup manifest could not be written: " +
                     ex.Message
                 );

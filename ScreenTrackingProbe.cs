@@ -42,7 +42,7 @@ namespace LocalMultiplayerMod
             }
 
             LastLogged[playerNumber] = delta;
-            JumpKing.Program.crashLog.AddErrorMessage(
+            NetplayLog.Write(
                 "Local Multiplayer screen tracking: player " + playerNumber +
                 " tracked=" + tracked + " real=" + real + " delta=" + delta +
                 " onGround=" + context.Body.IsOnGround +
@@ -72,7 +72,7 @@ namespace LocalMultiplayerMod
             // it keeps the two logs telling one continuous story.
             LastLogged[context.Number] = 0;
 
-            JumpKing.Program.crashLog.AddErrorMessage(
+            NetplayLog.Write(
                 "Local Multiplayer screen reconciled: player " + context.Number +
                 " tracked=" + context.Screen + " real=" + real +
                 " drift=" + (context.Screen - real) +

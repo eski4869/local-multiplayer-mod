@@ -474,7 +474,7 @@ namespace LocalMultiplayerMod
                 catch (Exception ex)
                 {
                     Contexts[index] = null;
-                    JumpKing.Program.crashLog.AddErrorMessage(
+                    NetplayLog.Write(
                         "Local Multiplayer player " + number + " start failed: " +
                         ex.Message
                     );

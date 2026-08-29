@@ -81,7 +81,7 @@ namespace LocalMultiplayerMod
 
             // Always logged, whether or not it was also shown. The log is what gets
             // sent back when something went wrong.
-            JumpKing.Program.crashLog.AddErrorMessage(
+            NetplayLog.Write(
                 "Local Multiplayer netplay: " + message
             );
 

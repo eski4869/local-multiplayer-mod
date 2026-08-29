@@ -5,13 +5,17 @@ using System.Reflection;
 namespace LocalMultiplayerMod
 {
     /// <summary>
-    /// This mod's own log file, beside its settings.
+    /// This mod's own log file, beside its settings. Everything this mod has to
+    /// say goes here and nothing goes anywhere else.
     ///
     /// Deliberately not <c>Program.crashLog</c>. That file is the game's, shared
     /// with every other mod, and is what a player is asked to hand over after a
-    /// crash - which is the wrong place to put a measurement taken while somebody
-    /// else was in the session. This one is the mod's own and holds one line per
-    /// session.
+    /// crash. Filling it with a line a second of somebody else's diagnostics
+    /// buries whatever the crash actually was, and hands over a measurement taken
+    /// while another person was in the session.
+    ///
+    /// The file keeps the name it had when only the session summary lived here.
+    /// Renaming it mid-investigation would cost more than the narrower name does.
     ///
     /// Nothing here sits on a per-frame path. An unbuffered write once per frame
     /// is what made an earlier report feed the fault it was reporting; a write

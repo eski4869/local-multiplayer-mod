@@ -266,7 +266,7 @@ namespace LocalMultiplayerMod
             patched += InstallTeleportScreen(harmony);
             InstallUpsideDownResync();
 
-            JumpKing.Program.crashLog.AddErrorMessage(
+            NetplayLog.Write(
                 "Local Multiplayer gimmick compatibility: scoped " +
                 patched + " targets" +
                 (Missing.Count == 0

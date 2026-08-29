@@ -103,7 +103,7 @@ namespace LocalMultiplayerMod
             // or not a session exists.
             SnapshotCost.MeasureOnce();
 
-            JumpKing.Program.crashLog.AddErrorMessage(
+            NetplayLog.Write(
                 "frame budget: players=" + ModEntry.PlayerCount +
                 " netplay=" + (ModEntry.Netplay.IsPlaying ? 1 : 0) +
                 " frame_ms=" + (_milliseconds / _frames).ToString("F2") +

@@ -38,7 +38,7 @@ namespace LocalMultiplayerMod
             MethodInfo target = AccessTools.Method(typeof(JumpState), "DoJump");
             if (target == null)
             {
-                Program.crashLog.AddErrorMessage(
+                NetplayLog.Write(
                     "Local Multiplayer jump probe: JumpState.DoJump not found."
                 );
                 return;
@@ -77,7 +77,7 @@ namespace LocalMultiplayerMod
             LaunchIntensity[number] = p_intensity;
             Rising[number] = true;
 
-            Program.crashLog.AddErrorMessage(
+            NetplayLog.Write(
                 "Local Multiplayer jump: player " + number +
                 " intensity=" + p_intensity.ToString("0.####") +
                 " velocity=" + Describe(body.Velocity) +
@@ -119,7 +119,7 @@ namespace LocalMultiplayerMod
             }
 
             Rising[number] = false;
-            Program.crashLog.AddErrorMessage(
+            NetplayLog.Write(
                 "Local Multiplayer jump peak: player " + number +
                 " intensity=" + LaunchIntensity[number].ToString("0.####") +
                 " rise=" + (LaunchY[number] - PeakY[number]).ToString("0.##") +

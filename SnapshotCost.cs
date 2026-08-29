@@ -65,7 +65,7 @@ namespace LocalMultiplayerMod
             bool restored = snapshot.Restore(context);
             restoreTimer.Stop();
 
-            JumpKing.Program.crashLog.AddErrorMessage(
+            NetplayLog.Write(
                 "snapshot cost: capture_ms=" +
                 captureTimer.Elapsed.TotalMilliseconds.ToString("F2") +
                 " restore_ms=" +

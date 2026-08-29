@@ -31,7 +31,7 @@ namespace LocalMultiplayerMod
             }
 
             Last[playerNumber] = line;
-            Program.crashLog.AddErrorMessage(
+            NetplayLog.Write(
                 "Local Multiplayer upside-down: player " + playerNumber + " " + line
             );
         }

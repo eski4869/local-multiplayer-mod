@@ -57,7 +57,7 @@ namespace LocalMultiplayerMod
             }
             catch (Exception ex)
             {
-                JumpKing.Program.crashLog.AddErrorMessage(
+                NetplayLog.Write(
                     "Local Multiplayer could not load " + asset + ": " +
                     ex.Message
                 );

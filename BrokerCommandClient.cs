@@ -30,7 +30,7 @@ namespace LocalMultiplayerMod
             }
             catch (Exception ex)
             {
-                JumpKing.Program.crashLog.AddErrorMessage(
+                NetplayLog.Write(
                     "Local Multiplayer broker register failed: " + ex.Message
                 );
             }
@@ -61,7 +61,7 @@ namespace LocalMultiplayerMod
             }
             catch (Exception ex)
             {
-                JumpKing.Program.crashLog.AddErrorMessage(
+                NetplayLog.Write(
                     "Local Multiplayer broker dequeue failed: " + ex.Message
                 );
                 return false;
@@ -126,7 +126,7 @@ namespace LocalMultiplayerMod
             if (!_loggedMissingBroker)
             {
                 _loggedMissingBroker = true;
-                JumpKing.Program.crashLog.AddErrorMessage(
+                NetplayLog.Write(
                     "Local Multiplayer: JumpKingHttpCommandBroker is not loaded."
                 );
             }

@@ -119,7 +119,7 @@ namespace LocalMultiplayerMod
             string detail
         )
         {
-            JumpKing.Program.crashLog.AddErrorMessage(
+            NetplayLog.Write(
                 "Local Multiplayer could not give player " + context.Number +
                 " the '" + record.ModName + "' behaviour for " +
                 record.BlockType.Name + ": " + detail

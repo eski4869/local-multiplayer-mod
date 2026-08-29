@@ -1425,7 +1425,7 @@ namespace LocalMultiplayerMod
             //
             // lag is how far the confirmed input trails the frame being simulated -
             // the amount this machine has to guess across, and which side is ahead.
-            JumpKing.Program.crashLog.AddErrorMessage(
+            NetplayLog.Write(
                 "netplay cost: f=" + _frame +
                 " rollbacks=" + _rollbackCount +
                 " resimulated=" + _resimulatedFrames +
@@ -1527,7 +1527,7 @@ namespace LocalMultiplayerMod
             System.Collections.Generic.IList<string> notes =
                 PlayerSnapshot.Capture(context, 0).DescribeUncovered();
 
-            JumpKing.Program.crashLog.AddErrorMessage(
+            NetplayLog.Write(
                 "Local Multiplayer netplay: snapshot does not follow " +
                 notes.Count + " references: " +
                 string.Join(", ", new System.Collections.Generic.List<string>(notes)
@@ -1569,7 +1569,7 @@ namespace LocalMultiplayerMod
                     ? _localInputs.TryGet(_frame, out input)
                     : _usedRemote.TryGet(_frame, out input);
 
-                JumpKing.Program.crashLog.AddErrorMessage(
+                NetplayLog.Write(
                     "netplay trace: f=" + _frame +
                     " p=" + number +
                     (number == LocalPlayer ? " local" : " remote") +
@@ -1734,7 +1734,7 @@ namespace LocalMultiplayerMod
             catch (Exception ex)
             {
                 NetplayNotice.Show("could not restart to line the worlds up");
-                JumpKing.Program.crashLog.AddErrorMessage(
+                NetplayLog.Write(
                     "Local Multiplayer restart failed: " + ex.Message
                 );
             }

@@ -130,7 +130,7 @@ namespace LocalMultiplayerMod
             }
             catch (Exception ex)
             {
-                JumpKing.Program.crashLog.AddErrorMessage(
+                NetplayLog.Write(
                     "Local Multiplayer could not hash the level: " + ex.Message
                 );
                 return 0;

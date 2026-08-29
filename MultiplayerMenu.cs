@@ -1,5 +1,7 @@
 using System;
+using System.Reflection;
 using BehaviorTree;
+using HarmonyLib;
 using JumpKing;
 using JumpKing.Controller;
 using JumpKing.PauseMenu;
@@ -333,10 +335,6 @@ namespace LocalMultiplayerMod
             );
 
             Page browse = new Page(format, lines);
-            for (int i = 0; i < LobbySlots; i++)
-            {
-                slots[i].Closes(browse);
-            }
 
             // Only the two ways in. Once a session exists this page is not
             // reachable at all - the slot below shows the way out in its place -
@@ -347,10 +345,15 @@ namespace LocalMultiplayerMod
                 MenuLine.Opening("Join", browse, null, KeepSearching)
             );
 
-            // Creating answers the question the whole branch was asking, so it
-            // leaves the description of a thing that now exists rather than
-            // sitting inside it.
+            // Creating and joining both answer the question the whole branch was
+            // asking, so they leave the description of a thing that now exists
+            // rather than sitting inside it. Both levels, because the lobby is
+            // not something to keep browsing for once you are in one.
             create.Closes(setup, page);
+            for (int i = 0; i < LobbySlots; i++)
+            {
+                slots[i].Closes(browse, page);
+            }
 
             ModeEntrance entrance = new ModeEntrance(
                 ModeKind.Online,
@@ -428,7 +431,38 @@ namespace LocalMultiplayerMod
             }
 
             ModEntry.Netplay.Host();
+            LeaveTheMenu();
             return true;
+        }
+
+        /// <summary>
+        /// Puts the player back in the game.
+        ///
+        /// Creating a lobby and joining one are both the end of what the menu was
+        /// for. Closing the pages and leaving somebody standing in the pause menu
+        /// finishes the errand and then makes them find their own way out of the
+        /// building.
+        ///
+        /// <c>PauseManager</c> is internal to the game, so it is reached by name,
+        /// the same way the session reaches it to restart.
+        /// </summary>
+        internal static void LeaveTheMenu()
+        {
+            try
+            {
+                Type type =
+                    AccessTools.TypeByName("JumpKing.PauseMenu.PauseManager");
+                MethodInfo setPause = AccessTools.Method(type, "SetPause");
+                if (setPause != null)
+                {
+                    setPause.Invoke(null, new object[] { false });
+                }
+            }
+            catch (Exception)
+            {
+                // The lobby is open either way. Being left in the menu is a
+                // nuisance; a thrown exception here would be worse.
+            }
         }
 
         private static bool Invite()
@@ -675,7 +709,13 @@ namespace LocalMultiplayerMod
 
         protected override bool Act()
         {
-            return ModEntry.Netplay.JoinFound(_slot);
+            if (!ModEntry.Netplay.JoinFound(_slot))
+            {
+                return false;
+            }
+
+            MultiplayerMenu.LeaveTheMenu();
+            return true;
         }
     }
 

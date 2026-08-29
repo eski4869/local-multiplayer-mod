@@ -335,7 +335,7 @@ namespace LocalMultiplayerMod
                 string error;
                 if (!TryReloadPreferences(out error))
                 {
-                    JumpKing.Program.crashLog.AddErrorMessage(
+                    NetplayLog.Write(
                         "Local Multiplayer settings were not loaded: " + error
                     );
                     return false;
@@ -620,7 +620,7 @@ namespace LocalMultiplayerMod
             _harmony = harmony;
             if (!complete)
             {
-                JumpKing.Program.crashLog.AddErrorMessage(
+                NetplayLog.Write(
                     "Local Multiplayer installed with missing patches; " +
                     "multiplayer behaviour will be degraded."
                 );
@@ -642,7 +642,7 @@ namespace LocalMultiplayerMod
 
             if (target == null)
             {
-                JumpKing.Program.crashLog.AddErrorMessage(
+                NetplayLog.Write(
                     "Local Multiplayer patch target not found: " + description
                 );
                 return false;
@@ -666,7 +666,7 @@ namespace LocalMultiplayerMod
             }
             catch (Exception ex)
             {
-                JumpKing.Program.crashLog.AddErrorMessage(
+                NetplayLog.Write(
                     "Local Multiplayer patch failed for " + description + ": " +
                     ex.Message
                 );
@@ -698,7 +698,7 @@ namespace LocalMultiplayerMod
             }
             catch (Exception ex)
             {
-                JumpKing.Program.crashLog.AddErrorMessage(
+                NetplayLog.Write(
                     "Local Multiplayer settings error: " + ex.Message
                 );
             }
@@ -715,7 +715,7 @@ namespace LocalMultiplayerMod
             }
             catch (FormatException ex)
             {
-                JumpKing.Program.crashLog.AddErrorMessage(
+                NetplayLog.Write(
                     "Local Multiplayer settings error: " + ex.Message
                 );
                 _preferences = new LocalMultiplayerPreferences();
@@ -833,7 +833,7 @@ namespace LocalMultiplayerMod
             }
             catch (Exception ex)
             {
-                JumpKing.Program.crashLog.AddErrorMessage(
+                NetplayLog.Write(
                     "Local Multiplayer settings save failed: " + ex.Message
                 );
             }
